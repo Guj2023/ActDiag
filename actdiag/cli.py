@@ -22,13 +22,24 @@ def build_parser() -> argparse.ArgumentParser:
         prog="actdiag",
         description="Actuator diagnosis experiments in a minimal MuJoCo scene.",
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run", help="Run a single actuator experiment.")
-    run_parser.add_argument("--actuator", required=True, type=Path, help="Actuator YAML profile.")
-    run_parser.add_argument("--scene", required=True, type=Path, help="Scene YAML profile.")
-    run_parser.add_argument("--test", required=True, type=Path, help="Test YAML profile.")
+    run_parser.add_argument(
+        "--actuator", required=True, type=Path, help="Actuator YAML profile."
+    )
+    run_parser.add_argument(
+        "--controller", required=True, type=Path, help="Controller YAML profile."
+    )
+    run_parser.add_argument(
+        "--scene", required=True, type=Path, help="Scene YAML profile."
+    )
+    run_parser.add_argument(
+        "--test", required=True, type=Path, help="Test YAML profile."
+    )
     run_parser.add_argument(
         "--output-dir",
         type=Path,
@@ -55,16 +66,19 @@ def handle_run(args: argparse.Namespace) -> int:
         raise ValueError("--video-fps must be positive")
 
     actuator_path = args.actuator.resolve()
+    controller_path = args.controller.resolve()
     scene_path = args.scene.resolve()
     test_path = args.test.resolve()
     output_dir = args.output_dir.resolve() if args.output_dir is not None else None
 
-    run_config = load_run_config(actuator_path, scene_path, test_path)
+    run_config = load_run_config(actuator_path, controller_path, scene_path, test_path)
     run_paths = create_run_paths(Path.cwd(), output_dir)
-    save_input_configs(run_paths, actuator_path, scene_path, test_path)
+    save_input_configs(run_paths, actuator_path, controller_path, scene_path, test_path)
     save_resolved_config(run_paths, run_config_to_dict(run_config))
 
-    artifacts = run_simulation(run_config, save_video=args.save_video, video_fps=args.video_fps)
+    artifacts = run_simulation(
+        run_config, save_video=args.save_video, video_fps=args.video_fps
+    )
     csv_path = save_timeseries(run_paths, artifacts.timeseries)
     save_plots(artifacts.timeseries, run_paths.figures_dir)
 
@@ -89,4 +103,3 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-

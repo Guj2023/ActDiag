@@ -7,7 +7,9 @@ import mujoco
 from actdiag.config import SingleJointSceneProfile
 
 
-def build_single_joint_model(scene_profile: SingleJointSceneProfile, dt: float) -> mujoco.MjModel:
+def build_single_joint_model(
+    scene_profile: SingleJointSceneProfile, dt: float
+) -> mujoco.MjModel:
     joint = scene_profile.joint
     gravity = "0 0 -9.81" if joint.gravity else "0 0 0"
 
@@ -50,10 +52,11 @@ def build_single_joint_model(scene_profile: SingleJointSceneProfile, dt: float) 
     return mujoco.MjModel.from_xml_string(xml)
 
 
-def initialize_scene_state(model: mujoco.MjModel, scene_profile: SingleJointSceneProfile) -> mujoco.MjData:
+def initialize_scene_state(
+    model: mujoco.MjModel, scene_profile: SingleJointSceneProfile
+) -> mujoco.MjData:
     data = mujoco.MjData(model)
     data.qpos[0] = scene_profile.joint.q0
     data.qvel[0] = scene_profile.joint.dq0
     mujoco.mj_forward(model, data)
     return data
-

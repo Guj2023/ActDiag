@@ -4,7 +4,7 @@ ActDiag is a minimal CLI project for actuator diagnosis in simulation. The targe
 
 ## Status
 
-`v0.1` is implemented as a working CLI. The current tool supports the MVP flow described below: loading three YAML profiles, running a single-joint MuJoCo simulation, saving CSV logs and plots, and optionally exporting video.
+`v0.1` is implemented as a working CLI. The current tool supports the MVP flow described below: loading four YAML profiles, running a single-joint MuJoCo simulation, saving CSV logs and plots, and optionally exporting video.
 
 ## Why ActDiag
 
@@ -20,9 +20,10 @@ The core question is simple: how does a given actuator model behave in a control
 
 ## MVP Scope
 
-ActDiag combines three YAML profiles into a single run:
+ActDiag combines four YAML profiles into a single run:
 
-- `actuator`: actuator type and parameters
+- `actuator`: how commanded torque is applied
+- `controller`: how torque commands are generated
 - `scene`: mechanical setup
 - `test`: command signal and timing
 
@@ -30,9 +31,10 @@ Planned `v0.1` support:
 
 - MuJoCo only
 - single-joint scene only
-- `pd` actuator
-- `ideal_torque` baseline
-- `step` and `sine` test inputs
+- `ideal_actuator`
+- controller modes: `pd`, `inverse_dynamics`, and `none`
+- position tests: `step` and `sine`
+- torque tests: `torque_step` and `torque_sine`
 - CSV time-series logging
 - five diagnostic plots
 - optional video export
@@ -55,7 +57,8 @@ Primary command:
 
 ```bash
 actdiag run \
-  --actuator examples/actuator_pd.yaml \
+  --actuator examples/actuator_ideal.yaml \
+  --controller examples/controller_pd.yaml \
   --scene examples/scene_single_joint.yaml \
   --test examples/test_step.yaml
 ```
@@ -64,10 +67,31 @@ Optional video export:
 
 ```bash
 actdiag run \
-  --actuator examples/actuator_pd.yaml \
+  --actuator examples/actuator_ideal.yaml \
+  --controller examples/controller_pd.yaml \
   --scene examples/scene_single_joint.yaml \
   --test examples/test_sine.yaml \
   --save-video
+```
+
+Inverse-dynamics controller example:
+
+```bash
+actdiag run \
+  --actuator examples/actuator_ideal.yaml \
+  --controller examples/controller_inverse_dynamics.yaml \
+  --scene examples/scene_single_joint.yaml \
+  --test examples/test_step.yaml
+```
+
+Direct torque injection example:
+
+```bash
+actdiag run \
+  --actuator examples/actuator_ideal.yaml \
+  --controller examples/controller_none.yaml \
+  --scene examples/scene_single_joint.yaml \
+  --test examples/test_torque_step.yaml
 ```
 
 Current command:
@@ -81,20 +105,33 @@ Commands like `compare`, `sweep`, or `report` can come later.
 ### Actuator profile
 
 ```yaml
+type: ideal_actuator
+torque_limit: 40.0
+```
+
+### Controller profiles
+
+PD controller:
+
+```yaml
 type: pd
 kp: 100.0
 kd: 2.0
-torque_limit: 40.0
 ```
 
-Ideal torque baseline:
+Inverse-dynamics controller:
 
 ```yaml
-type: ideal_torque
-torque_limit: 40.0
+type: inverse_dynamics
+kp: 25.0
+kd: 6.0
 ```
 
-Optional feedback gains can also be provided for `ideal_torque`; if omitted, the CLI uses defaults.
+Direct torque mode:
+
+```yaml
+type: none
+```
 
 ### Scene profile
 
@@ -131,11 +168,34 @@ duration: 5.0
 dt: 0.001
 ```
 
+Torque step input:
+
+```yaml
+test_type: torque_step
+target_torque: 1.5
+start_time: 0.2
+duration: 2.0
+dt: 0.001
+```
+
+Torque sine input:
+
+```yaml
+test_type: torque_sine
+amplitude: 1.2
+frequency: 1.0
+offset: 0.0
+duration: 5.0
+dt: 0.001
+```
+
 Recommended validation rules:
 
-- actuator: supported `type`, `kp >= 0`, `kd >= 0`, `torque_limit > 0`
+- actuator: supported `type`, `torque_limit > 0`
+- controller: supported `type`, `kp >= 0`, `kd >= 0` when applicable
 - scene: supported `scene_type`, `inertia > 0`, `damping >= 0`, finite initial state
 - test: supported `test_type`, `duration > 0`, `dt > 0`
+- pairing: `pd` and `inverse_dynamics` require position tests, `none` requires torque tests
 
 ## Outputs
 
@@ -146,6 +206,7 @@ runs/
   2026-04-06_191530/
     config/
       actuator.yaml
+      controller.yaml
       scene.yaml
       test.yaml
       resolved.yaml
@@ -166,7 +227,7 @@ Why `resolved.yaml` matters: it captures the final effective configuration after
 Expected CSV columns:
 
 ```text
-time,q,dq,q_des,dq_des,position_error,velocity_error,tau_cmd,tau_applied
+time,q,dq,q_des,dq_des,tau_des,position_error,velocity_error,tau_cmd,tau_applied
 ```
 
 Planned figures:
@@ -209,6 +270,7 @@ actdiag/
   __init__.py
   cli.py
   config.py
+  controller.py
   signals.py
   actuator.py
   scene.py
@@ -217,11 +279,15 @@ actdiag/
   plotting.py
 
 examples/
-  actuator_pd.yaml
   actuator_ideal.yaml
+  controller_pd.yaml
+  controller_inverse_dynamics.yaml
+  controller_none.yaml
   scene_single_joint.yaml
   test_step.yaml
   test_sine.yaml
+  test_torque_step.yaml
+  test_torque_sine.yaml
 
 runs/
 README.md
@@ -231,8 +297,8 @@ README.md
 
 1. YAML loading and schema validation with Pydantic.
 2. Single-joint MuJoCo scene generation.
-3. `pd` and `ideal_torque` actuator modes.
-4. `step` and `sine` reference generation.
+3. `ideal_actuator` plus separate `pd`, `inverse_dynamics`, and `none` controller modes.
+4. `step`, `sine`, `torque_step`, and `torque_sine` reference generation.
 5. CSV logging, resolved config export, and plot generation.
 6. Optional MP4 video export.
 

@@ -1,3 +1,2 @@
-type: ideal_torque
+type: ideal_actuator
 torque_limit: 40.0
-

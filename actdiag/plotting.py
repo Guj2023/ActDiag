@@ -16,7 +16,7 @@ def save_plots(timeseries: pd.DataFrame, figures_dir: Path) -> None:
     _save_line_plot(
         figures_dir / "position.png",
         timeseries["time"],
-        (
+        _defined_series(
             ("Measured position", timeseries["q"]),
             ("Desired position", timeseries["q_des"]),
         ),
@@ -26,7 +26,7 @@ def save_plots(timeseries: pd.DataFrame, figures_dir: Path) -> None:
     _save_line_plot(
         figures_dir / "velocity.png",
         timeseries["time"],
-        (
+        _defined_series(
             ("Measured velocity", timeseries["dq"]),
             ("Desired velocity", timeseries["dq_des"]),
         ),
@@ -36,7 +36,8 @@ def save_plots(timeseries: pd.DataFrame, figures_dir: Path) -> None:
     _save_line_plot(
         figures_dir / "torque.png",
         timeseries["time"],
-        (
+        _defined_series(
+            ("Desired torque", timeseries["tau_des"]),
             ("Commanded torque", timeseries["tau_cmd"]),
             ("Applied torque", timeseries["tau_applied"]),
         ),
@@ -46,7 +47,9 @@ def save_plots(timeseries: pd.DataFrame, figures_dir: Path) -> None:
     _save_line_plot(
         figures_dir / "error.png",
         timeseries["time"],
-        (("Position error", timeseries["position_error"]),),
+        _defined_series(
+            ("Position error", timeseries["position_error"]),
+        ),
         ylabel="Position error [rad]",
         title="Position Error vs Time",
     )
@@ -62,13 +65,24 @@ def _save_line_plot(
     title: str,
 ) -> None:
     figure, axis = plt.subplots(figsize=(9, 4.5))
+    plotted_series = 0
     for label, values in series:
         axis.plot(time_values, values, label=label, linewidth=2)
+        plotted_series += 1
+    if plotted_series == 0:
+        axis.text(
+            0.5,
+            0.5,
+            "No reference signal for this plot",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
     axis.set_xlabel("Time [s]")
     axis.set_ylabel(ylabel)
     axis.set_title(title)
     axis.grid(True, alpha=0.3)
-    if len(series) > 1:
+    if plotted_series > 1:
         axis.legend()
     figure.tight_layout()
     figure.savefig(path, dpi=150)
@@ -86,3 +100,8 @@ def _save_phase_plot(path: Path, timeseries: pd.DataFrame) -> None:
     figure.savefig(path, dpi=150)
     plt.close(figure)
 
+
+def _defined_series(
+    *series: tuple[str, pd.Series]
+) -> tuple[tuple[str, pd.Series], ...]:
+    return tuple((label, values) for label, values in series if values.notna().any())

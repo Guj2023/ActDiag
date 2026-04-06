@@ -5,8 +5,9 @@ from dataclasses import dataclass
 import mujoco
 import pandas as pd
 
-from actdiag.actuator import ControlState, build_actuator
+from actdiag.actuator import build_actuator
 from actdiag.config import RunConfig
+from actdiag.controller import ControlState, build_controller
 from actdiag.scene import build_single_joint_model, initialize_scene_state
 from actdiag.signals import build_signal_series
 
@@ -47,11 +48,14 @@ class VideoRecorder:
             close()
 
 
-def run_simulation(run_config: RunConfig, save_video: bool = False, video_fps: int = 30) -> SimulationArtifacts:
+def run_simulation(
+    run_config: RunConfig, save_video: bool = False, video_fps: int = 30
+) -> SimulationArtifacts:
     signals = build_signal_series(run_config.test)
     model = build_single_joint_model(run_config.scene, run_config.test.dt)
     data = initialize_scene_state(model, run_config.scene)
-    actuator = build_actuator(run_config.actuator, model)
+    actuator = build_actuator(run_config.actuator)
+    controller = build_controller(run_config.controller, model)
     recorder = VideoRecorder(model, video_fps) if save_video else None
 
     records: dict[str, list[float]] = {
@@ -60,6 +64,7 @@ def run_simulation(run_config: RunConfig, save_video: bool = False, video_fps: i
         "dq": [],
         "q_des": [],
         "dq_des": [],
+        "tau_des": [],
         "position_error": [],
         "velocity_error": [],
         "tau_cmd": [],
@@ -76,6 +81,7 @@ def run_simulation(run_config: RunConfig, save_video: bool = False, video_fps: i
         q_des = float(signals.q_des[index])
         dq_des = float(signals.dq_des[index])
         qdd_des = float(signals.qdd_des[index])
+        tau_des = float(signals.tau_des[index])
 
         control_state = ControlState(
             time=float(time_value),
@@ -84,16 +90,21 @@ def run_simulation(run_config: RunConfig, save_video: bool = False, video_fps: i
             q_des=q_des,
             dq_des=dq_des,
             qdd_des=qdd_des,
+            tau_des=tau_des,
         )
-        tau_cmd, tau_applied = actuator.compute(control_state)
+        tau_cmd = controller.compute(control_state)
+        tau_applied = actuator.apply(tau_cmd)
 
         records["time"].append(float(time_value))
         records["q"].append(q)
         records["dq"].append(dq)
         records["q_des"].append(q_des)
         records["dq_des"].append(dq_des)
-        records["position_error"].append(q_des - q)
-        records["velocity_error"].append(dq_des - dq)
+        records["tau_des"].append(tau_des)
+        position_error = q_des - q if not pd.isna(q_des) else float("nan")
+        velocity_error = dq_des - dq if not pd.isna(dq_des) else float("nan")
+        records["position_error"].append(position_error)
+        records["velocity_error"].append(velocity_error)
         records["tau_cmd"].append(tau_cmd)
         records["tau_applied"].append(tau_applied)
 
@@ -115,4 +126,3 @@ def run_simulation(run_config: RunConfig, save_video: bool = False, video_fps: i
         video_frames=frames,
         video_fps=video_fps if frames is not None else None,
     )
-

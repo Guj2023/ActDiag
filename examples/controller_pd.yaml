@@ -1,5 +1,3 @@
 type: pd
 kp: 100.0
 kd: 2.0
-torque_limit: 40.0
-
