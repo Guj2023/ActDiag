@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "actdiag"
+version = "0.1.0"
+description = "Minimal CLI tool for actuator diagnosis in simulation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "imageio>=2.34",
+  "imageio-ffmpeg>=0.5",
+  "matplotlib>=3.8",
+  "mujoco>=3.1",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pydantic>=2.6",
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+actdiag = "actdiag.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["actdiag*"]
+

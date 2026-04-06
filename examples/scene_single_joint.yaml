@@ -1,0 +1,8 @@
+scene_type: single_joint
+joint:
+  inertia: 0.05
+  damping: 0.1
+  gravity: false
+  q0: 0.0
+  dq0: 0.0
+
