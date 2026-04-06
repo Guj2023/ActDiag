@@ -9,51 +9,58 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from actdiag.config import PlotConfig
 
-def save_plots(timeseries: pd.DataFrame, figures_dir: Path) -> None:
+
+def save_plots(timeseries: pd.DataFrame, figures_dir: Path, plot_config: PlotConfig) -> None:
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    _save_line_plot(
-        figures_dir / "position.png",
-        timeseries["time"],
-        _defined_series(
-            ("Measured position", timeseries["q"]),
-            ("Desired position", timeseries["q_des"]),
-        ),
-        ylabel="Position [rad]",
-        title="Position vs Time",
-    )
-    _save_line_plot(
-        figures_dir / "velocity.png",
-        timeseries["time"],
-        _defined_series(
-            ("Measured velocity", timeseries["dq"]),
-            ("Desired velocity", timeseries["dq_des"]),
-        ),
-        ylabel="Velocity [rad/s]",
-        title="Velocity vs Time",
-    )
-    _save_line_plot(
-        figures_dir / "torque.png",
-        timeseries["time"],
-        _defined_series(
-            ("Desired torque", timeseries["tau_des"]),
-            ("Commanded torque", timeseries["tau_cmd"]),
-            ("Applied torque", timeseries["tau_applied"]),
-        ),
-        ylabel="Torque [Nm]",
-        title="Torque vs Time",
-    )
-    _save_line_plot(
-        figures_dir / "error.png",
-        timeseries["time"],
-        _defined_series(
-            ("Position error", timeseries["position_error"]),
-        ),
-        ylabel="Position error [rad]",
-        title="Position Error vs Time",
-    )
-    _save_phase_plot(figures_dir / "phase.png", timeseries)
+    if plot_config.position:
+        _save_line_plot(
+            figures_dir / "position.png",
+            timeseries["time"],
+            _defined_series(
+                ("Measured position", timeseries["q"]),
+                ("Desired position", timeseries["q_des"]),
+            ),
+            ylabel="Position [rad]",
+            title="Position vs Time",
+        )
+    if plot_config.velocity:
+        _save_line_plot(
+            figures_dir / "velocity.png",
+            timeseries["time"],
+            _defined_series(
+                ("Measured velocity", timeseries["dq"]),
+                ("Desired velocity", timeseries["dq_des"]),
+            ),
+            ylabel="Velocity [rad/s]",
+            title="Velocity vs Time",
+        )
+    if plot_config.torque:
+        _save_line_plot(
+            figures_dir / "torque.png",
+            timeseries["time"],
+            _defined_series(
+                ("Desired torque", timeseries["tau_des"]),
+                ("Commanded torque", timeseries["tau_cmd"]),
+                ("Applied torque", timeseries["tau_applied"]),
+            ),
+            ylabel="Torque [Nm]",
+            title="Torque vs Time",
+        )
+    if plot_config.error:
+        _save_line_plot(
+            figures_dir / "error.png",
+            timeseries["time"],
+            _defined_series(
+                ("Position error", timeseries["position_error"]),
+            ),
+            ylabel="Position error [rad]",
+            title="Position Error vs Time",
+        )
+    if plot_config.phase:
+        _save_phase_plot(figures_dir / "phase.png", timeseries)
 
 
 def _save_line_plot(

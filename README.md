@@ -1,214 +1,211 @@
 # ActDiag
 
-ActDiag is a minimal CLI project for actuator diagnosis in simulation. The target is intentionally narrow: run a simple, reproducible actuator test in MuJoCo and save the logs and plots needed to understand what happened.
+ActDiag is a minimal CLI tool for actuator diagnosis in simulation with MuJoCo. The scope is narrow on purpose: run one controlled experiment, log the result, and save a few plots that make the actuator behavior easy to inspect.
 
 ## Status
 
-`v0.1` is implemented as a working CLI. The current tool supports the MVP flow described below: loading four YAML profiles, running a single-joint MuJoCo simulation, saving CSV logs and plots, and optionally exporting video.
+`v0.3.0` is still an MVP. The codebase keeps controller, actuator, scene, and test logic split internally, but the user-facing configuration is now reduced to two YAML files:
 
-## Why ActDiag
+- `system.yaml`
+- `scenario.yaml`
 
-Actuator issues are often hidden inside a full robot stack, where it is hard to tell whether bad behavior comes from the actuator model, controller gains, mechanical load, reference signal, or simulator details. ActDiag strips that down to the smallest useful experiment:
+That keeps the tool small while making the experiment structure easier to read.
 
-- one actuator
-- one joint
-- one scene
-- one test profile
-- one output folder with reproducible artifacts
+## Core Idea
 
-The core question is simple: how does a given actuator model behave in a controlled test?
+The conceptual model is:
+
+```text
+scenario.test
+-> system.controller
+-> system.actuator
+-> scenario.scene
+-> logs / plots / outputs
+```
+
+In this model:
+
+- the `system` profile is the thing being diagnosed
+- the `scenario` profile is the diagnostic condition
+
+Controller and actuator are separate concepts. They are not treated as one combined "PD actuator". The earlier simple behavior is better understood as:
+
+```text
+reference -> PD controller -> torque actuator -> plant
+```
+
+For the current MVP, that means:
+
+- controller type: `pd_position`
+- actuator type: `ideal_torque`
 
 ## MVP Scope
 
-ActDiag combines four YAML profiles into a single run:
+ActDiag uses two user-facing profiles per run.
 
-- `actuator`: how commanded torque is applied
-- `controller`: how torque commands are generated
-- `scene`: mechanical setup
-- `test`: command signal and timing
+`system.yaml` contains:
 
-Planned `v0.1` support:
+- `controller`
+- `actuator`
 
-- MuJoCo only
-- single-joint scene only
-- `ideal_actuator`
-- controller modes: `pd`, `inverse_dynamics`, and `none`
-- position tests: `step` and `sine`
-- torque tests: `torque_step` and `torque_sine`
+`scenario.yaml` contains:
+
+- `scene`
+- `test`
+- `simulation` settings
+- `logging` settings
+- `plots` settings
+- `output` settings
+
+Supported MVP features:
+
+- controller types: `pd_position`
+- actuator types: `ideal_torque`
+- scene types: `single_joint`
+- test types: `step`, `sine`
 - CSV time-series logging
-- five diagnostic plots
+- diagnostic plots
 - optional video export
-- preservation of original and resolved configs
 
-Explicit non-goals for the MVP:
+Explicit non-goals for the current MVP:
 
 - multi-DOF systems
 - contact-rich tasks
-- disturbance injection
-- friction or delay models
+- plugin systems
+- large framework abstractions
 - parameter sweeps
 - automatic diagnosis labels
 - GUI or web frontend
-- system identification
 
 ## CLI
 
 Primary command:
 
 ```bash
-actdiag run \
-  --actuator examples/actuator_ideal.yaml \
-  --controller examples/controller_pd.yaml \
-  --scene examples/scene_single_joint.yaml \
-  --test examples/test_step.yaml
+actdiag run --system system.yaml --scenario scenario.yaml
 ```
 
-Optional video export:
+With video:
 
 ```bash
-actdiag run \
-  --actuator examples/actuator_ideal.yaml \
-  --controller examples/controller_pd.yaml \
-  --scene examples/scene_single_joint.yaml \
-  --test examples/test_sine.yaml \
-  --save-video
+actdiag run --system system.yaml --scenario scenario.yaml --save-video
 ```
 
-Inverse-dynamics controller example:
-
-```bash
-actdiag run \
-  --actuator examples/actuator_ideal.yaml \
-  --controller examples/controller_inverse_dynamics.yaml \
-  --scene examples/scene_single_joint.yaml \
-  --test examples/test_step.yaml
-```
-
-Direct torque injection example:
-
-```bash
-actdiag run \
-  --actuator examples/actuator_ideal.yaml \
-  --controller examples/controller_none.yaml \
-  --scene examples/scene_single_joint.yaml \
-  --test examples/test_torque_step.yaml
-```
-
-Current command:
-
-- `actdiag run`
-
-Commands like `compare`, `sweep`, or `report` can come later.
+The CLI is intentionally small. `actdiag run` is the only command that matters for the MVP.
 
 ## Configuration
 
-### Actuator profile
+### `system.yaml`
 
 ```yaml
-type: ideal_actuator
-torque_limit: 40.0
+controller:
+  type: pd_position
+  kp: 100.0
+  kd: 2.0
+
+actuator:
+  type: ideal_torque
+  torque_limit: 40.0
 ```
 
-### Controller profiles
+### `scenario.yaml`
 
-PD controller:
-
-```yaml
-type: pd
-kp: 100.0
-kd: 2.0
-```
-
-Inverse-dynamics controller:
+Step test example:
 
 ```yaml
-type: inverse_dynamics
-kp: 25.0
-kd: 6.0
-```
-
-Direct torque mode:
-
-```yaml
-type: none
-```
-
-### Scene profile
-
-```yaml
-scene_type: single_joint
-joint:
+scene:
+  type: single_joint
   inertia: 0.05
   damping: 0.1
   gravity: false
   q0: 0.0
   dq0: 0.0
+
+test:
+  type: step
+  target: 0.5
+  start_time: 0.2
+
+simulation:
+  duration: 2.0
+  dt: 0.001
+
+logging:
+  save_csv: true
+
+plots:
+  position: true
+  velocity: true
+  torque: true
+  error: true
+  phase: true
+
+output:
+  save_video: false
 ```
 
-### Test profiles
-
-Step input:
+Sine test example:
 
 ```yaml
-test_type: step
-target: 0.5
-start_time: 0.2
-duration: 2.0
-dt: 0.001
+scene:
+  type: single_joint
+  inertia: 0.05
+  damping: 0.1
+  gravity: false
+  q0: 0.0
+  dq0: 0.0
+
+test:
+  type: sine
+  amplitude: 0.2
+  frequency: 1.0
+  offset: 0.0
+
+simulation:
+  duration: 2.0
+  dt: 0.001
+
+logging:
+  save_csv: true
+
+plots:
+  position: true
+  velocity: true
+  torque: true
+  error: true
+  phase: true
+
+output:
+  save_video: false
 ```
 
-Sine input:
-
-```yaml
-test_type: sine
-amplitude: 0.2
-frequency: 1.0
-offset: 0.0
-duration: 5.0
-dt: 0.001
-```
-
-Torque step input:
-
-```yaml
-test_type: torque_step
-target_torque: 1.5
-start_time: 0.2
-duration: 2.0
-dt: 0.001
-```
-
-Torque sine input:
-
-```yaml
-test_type: torque_sine
-amplitude: 1.2
-frequency: 1.0
-offset: 0.0
-duration: 5.0
-dt: 0.001
-```
+## Validation
 
 Recommended validation rules:
 
-- actuator: supported `type`, `torque_limit > 0`
-- controller: supported `type`, `kp >= 0`, `kd >= 0` when applicable
-- scene: supported `scene_type`, `inertia > 0`, `damping >= 0`, finite initial state
-- test: supported `test_type`, `duration > 0`, `dt > 0`
-- pairing: `pd` and `inverse_dynamics` require position tests, `none` requires torque tests
+- `controller.type` must be supported
+- `actuator.type` must be supported
+- `kp >= 0`
+- `kd >= 0`
+- `torque_limit > 0`
+- `scene.type` must be supported
+- `inertia > 0`
+- `damping >= 0`
+- `simulation.duration > 0`
+- `simulation.dt > 0`
+- `step.start_time >= 0`
+- `sine.frequency > 0`
 
 ## Outputs
 
-Each run produces a self-contained directory:
+Each run produces a compact directory:
 
 ```text
 runs/
   2026-04-06_191530/
     config/
-      actuator.yaml
-      controller.yaml
-      scene.yaml
-      test.yaml
+      system.yaml
+      scenario.yaml
       resolved.yaml
     data/
       timeseries.csv
@@ -222,7 +219,7 @@ runs/
       sim.mp4
 ```
 
-Why `resolved.yaml` matters: it captures the final effective configuration after defaults and merges, which is essential for reproducibility.
+`resolved.yaml` matters because it records the effective configuration that actually produced the run.
 
 Expected CSV columns:
 
@@ -230,19 +227,9 @@ Expected CSV columns:
 time,q,dq,q_des,dq_des,tau_des,position_error,velocity_error,tau_cmd,tau_applied
 ```
 
-Planned figures:
-
-- position vs time
-- velocity vs time
-- torque vs time
-- position error vs time
-- phase plot (`q` vs `dq`)
-
-Raw logs are the primary artifact. Plots and video are derived outputs.
+The primary artifacts are still the raw logs. Plots and video are derived outputs.
 
 ## Installation
-
-The project is packaged as a standard Python CLI:
 
 - Python 3.10+
 - MuJoCo
@@ -261,59 +248,57 @@ pip install -U pip
 pip install -e .
 ```
 
-## Layout
+## Package Layout
 
-Current project structure:
+A reasonable MVP package layout is:
 
 ```text
 actdiag/
   __init__.py
   cli.py
   config.py
-  controller.py
   signals.py
+  controller.py
   actuator.py
   scene.py
   simulate.py
   logging_io.py
   plotting.py
-
-examples/
-  actuator_ideal.yaml
-  controller_pd.yaml
-  controller_inverse_dynamics.yaml
-  controller_none.yaml
-  scene_single_joint.yaml
-  test_step.yaml
-  test_sine.yaml
-  test_torque_step.yaml
-  test_torque_sine.yaml
-
-runs/
-README.md
 ```
 
-## Implemented Features
+Example config files can stay simple:
 
-1. YAML loading and schema validation with Pydantic.
-2. Single-joint MuJoCo scene generation.
-3. `ideal_actuator` plus separate `pd`, `inverse_dynamics`, and `none` controller modes.
-4. `step`, `sine`, `torque_step`, and `torque_sine` reference generation.
-5. CSV logging, resolved config export, and plot generation.
-6. Optional MP4 video export.
+```text
+examples/
+  system.yaml
+  scenario_step.yaml
+  scenario_sine.yaml
+```
 
-## Future Extensions
+## Development Checklist
 
-Likely next steps after the MVP:
+- keep two user-facing profiles: `system.yaml` and `scenario.yaml`
+- keep controller and actuator conceptually separate inside `system.yaml`
+- keep scene and test separate inside `scenario.yaml`
+- keep the simulation path explicit: test -> controller -> actuator -> scene
+- keep schemas strict and validation simple
+- keep outputs reproducible with copied inputs and a resolved config
 
-- actuator non-idealities such as saturation, deadzone, delay, or friction
-- more test signals such as chirp, ramp, or trajectory replay
-- summary metrics such as RMS error, overshoot, and settling time
-- comparison workflows across actuator profiles or gain settings
-- more scenes, including loaded pendulums or coupled systems
+## Roadmap
 
-The intended order is simple: make the minimal pipeline clean, make the logs reliable, then add more analysis and complexity.
+Near-term work that still fits the MVP:
+
+- tighten schema validation and error messages
+- add a few compact summary metrics on top of the existing logs
+- improve plot readability without expanding the architecture
+- add one or two more actuator or scene variants only if the current pipeline stays clean
+
+Longer-term vision, still grounded:
+
+- make actuator diagnosis runs easier to reproduce
+- keep the experiment definition explicit and small
+- add capability only when it improves diagnosis clarity, not because the project should become a framework
 
 ## License
 
-TBD. If the project is published later, MIT would be a reasonable default.
+TBD. MIT would be a reasonable default if the project is published later.

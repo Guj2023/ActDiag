@@ -29,16 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run", help="Run a single actuator experiment.")
     run_parser.add_argument(
-        "--actuator", required=True, type=Path, help="Actuator YAML profile."
+        "--system", required=True, type=Path, help="System YAML profile."
     )
     run_parser.add_argument(
-        "--controller", required=True, type=Path, help="Controller YAML profile."
-    )
-    run_parser.add_argument(
-        "--scene", required=True, type=Path, help="Scene YAML profile."
-    )
-    run_parser.add_argument(
-        "--test", required=True, type=Path, help="Test YAML profile."
+        "--scenario", required=True, type=Path, help="Scenario YAML profile."
     )
     run_parser.add_argument(
         "--output-dir",
@@ -49,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--save-video",
         action="store_true",
+        default=None,
         help="Render an MP4 video into the run directory.",
     )
     run_parser.add_argument(
@@ -65,30 +60,33 @@ def handle_run(args: argparse.Namespace) -> int:
     if args.video_fps <= 0:
         raise ValueError("--video-fps must be positive")
 
-    actuator_path = args.actuator.resolve()
-    controller_path = args.controller.resolve()
-    scene_path = args.scene.resolve()
-    test_path = args.test.resolve()
+    system_path = args.system.resolve()
+    scenario_path = args.scenario.resolve()
     output_dir = args.output_dir.resolve() if args.output_dir is not None else None
 
-    run_config = load_run_config(actuator_path, controller_path, scene_path, test_path)
+    run_config = load_run_config(system_path, scenario_path)
     run_paths = create_run_paths(Path.cwd(), output_dir)
-    save_input_configs(run_paths, actuator_path, controller_path, scene_path, test_path)
+    save_input_configs(run_paths, system_path, scenario_path)
     save_resolved_config(run_paths, run_config_to_dict(run_config))
 
-    artifacts = run_simulation(
-        run_config, save_video=args.save_video, video_fps=args.video_fps
-    )
-    csv_path = save_timeseries(run_paths, artifacts.timeseries)
-    save_plots(artifacts.timeseries, run_paths.figures_dir)
+    should_save_video = bool(args.save_video or run_config.output.save_video)
 
-    if args.save_video:
+    artifacts = run_simulation(
+        run_config, save_video=should_save_video, video_fps=args.video_fps
+    )
+    csv_path = None
+    if run_config.logging.save_csv:
+        csv_path = save_timeseries(run_paths, artifacts.timeseries)
+    save_plots(artifacts.timeseries, run_paths.figures_dir, run_config.plots)
+
+    if should_save_video:
         if artifacts.video_frames is None or artifacts.video_fps is None:
             raise RuntimeError("video export requested but no frames were produced")
         save_video(run_paths, artifacts.video_frames, artifacts.video_fps)
 
     print(f"Run complete: {run_paths.run_dir}")
-    print(f"Timeseries: {csv_path}")
+    if csv_path is not None:
+        print(f"Timeseries: {csv_path}")
     return 0
 
 

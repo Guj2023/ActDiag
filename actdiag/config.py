@@ -131,6 +131,22 @@ class TorqueSineTestProfile(StrictModel):
         return value
 
 
+class LoggingConfig(StrictModel):
+    save_csv: bool = True
+
+
+class PlotConfig(StrictModel):
+    position: bool = True
+    velocity: bool = True
+    torque: bool = True
+    error: bool = True
+    phase: bool = True
+
+
+class OutputConfig(StrictModel):
+    save_video: bool = False
+
+
 PositionTestProfile = StepTestProfile | SineTestProfile
 TorqueTestProfile = TorqueStepTestProfile | TorqueSineTestProfile
 TestProfile = PositionTestProfile | TorqueTestProfile
@@ -141,6 +157,9 @@ class RunConfig(StrictModel):
     controller: ControllerProfile
     scene: SingleJointSceneProfile
     test: TestProfile
+    logging: LoggingConfig = LoggingConfig()
+    plots: PlotConfig = PlotConfig()
+    output: OutputConfig = OutputConfig()
 
     @model_validator(mode="after")
     def validate_controller_test_pairing(self) -> "RunConfig":
@@ -176,27 +195,66 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _parse_actuator_profile(data: dict[str, Any]) -> ActuatorProfile:
     actuator_type = data.get("type")
-    if actuator_type == "ideal_actuator":
-        return IdealActuatorProfile.model_validate(data)
+    normalized_type = {
+        "ideal_torque": "ideal_actuator",
+        "ideal_actuator": "ideal_actuator",
+    }.get(actuator_type)
+    if normalized_type == "ideal_actuator":
+        return IdealActuatorProfile.model_validate({**data, "type": normalized_type})
     raise ValueError("unsupported actuator type")
 
 
 def _parse_controller_profile(data: dict[str, Any]) -> ControllerProfile:
     controller_type = data.get("type")
-    if controller_type == "pd":
-        return PDControllerProfile.model_validate(data)
-    if controller_type == "inverse_dynamics":
-        return InverseDynamicsControllerProfile.model_validate(data)
-    if controller_type == "none":
-        return NoneControllerProfile.model_validate(data)
+    normalized_type = {
+        "pd_position": "pd",
+        "pd": "pd",
+        "inverse_dynamics": "inverse_dynamics",
+        "none": "none",
+    }.get(controller_type)
+    if normalized_type == "pd":
+        return PDControllerProfile.model_validate({**data, "type": normalized_type})
+    if normalized_type == "inverse_dynamics":
+        return InverseDynamicsControllerProfile.model_validate(
+            {**data, "type": normalized_type}
+        )
+    if normalized_type == "none":
+        return NoneControllerProfile.model_validate({**data, "type": normalized_type})
     raise ValueError("unsupported controller type")
 
 
 def _parse_scene_profile(data: dict[str, Any]) -> SingleJointSceneProfile:
-    scene_type = data.get("scene_type")
+    if "scene_type" in data:
+        scene_type = data.get("scene_type")
+        scene_data = data
+    else:
+        scene_type = data.get("type")
+        scene_data = {
+            "scene_type": scene_type,
+            "joint": {
+                "inertia": data.get("inertia"),
+                "damping": data.get("damping", 0.0),
+                "gravity": data.get("gravity", False),
+                "q0": data.get("q0", 0.0),
+                "dq0": data.get("dq0", 0.0),
+            },
+        }
+
     if scene_type != "single_joint":
         raise ValueError("unsupported scene type")
-    return SingleJointSceneProfile.model_validate(data)
+    return SingleJointSceneProfile.model_validate(scene_data)
+
+
+def _merge_simulation_settings(
+    test_data: dict[str, Any], simulation_data: dict[str, Any]
+) -> dict[str, Any]:
+    merged = dict(test_data)
+    for key in ("duration", "dt"):
+        if key in merged and key in simulation_data and merged[key] != simulation_data[key]:
+            raise ValueError(f"conflicting values for test.{key} and simulation.{key}")
+        if key not in merged and key in simulation_data:
+            merged[key] = simulation_data[key]
+    return merged
 
 
 def _parse_test_profile(data: dict[str, Any]) -> TestProfile:
@@ -212,20 +270,90 @@ def _parse_test_profile(data: dict[str, Any]) -> TestProfile:
     raise ValueError("unsupported test type")
 
 
-def load_run_config(
-    actuator_path: Path, controller_path: Path, scene_path: Path, test_path: Path
-) -> RunConfig:
-    actuator = _parse_actuator_profile(_load_yaml(actuator_path))
-    controller = _parse_controller_profile(_load_yaml(controller_path))
-    scene = _parse_scene_profile(_load_yaml(scene_path))
-    test = _parse_test_profile(_load_yaml(test_path))
+def _parse_user_test_profile(
+    test_data: dict[str, Any], simulation_data: dict[str, Any]
+) -> TestProfile:
+    merged_data = _merge_simulation_settings(test_data, simulation_data)
+    normalized_type = merged_data.get("type", merged_data.get("test_type"))
+    normalized_data = dict(merged_data)
+    normalized_data.pop("type", None)
+    normalized_data["test_type"] = normalized_type
+    return _parse_test_profile(normalized_data)
+
+
+def load_run_config(system_path: Path, scenario_path: Path) -> RunConfig:
+    system_data = _load_yaml(system_path)
+    scenario_data = _load_yaml(scenario_path)
+
+    controller = _parse_controller_profile(system_data.get("controller", {}))
+    actuator = _parse_actuator_profile(system_data.get("actuator", {}))
+    scene = _parse_scene_profile(scenario_data.get("scene", {}))
+    test = _parse_user_test_profile(
+        scenario_data.get("test", {}), scenario_data.get("simulation", {})
+    )
+    logging = LoggingConfig.model_validate(scenario_data.get("logging", {}))
+    plots = PlotConfig.model_validate(scenario_data.get("plots", {}))
+    output = OutputConfig.model_validate(scenario_data.get("output", {}))
+
     return RunConfig(
         actuator=actuator,
         controller=controller,
         scene=scene,
         test=test,
+        logging=logging,
+        plots=plots,
+        output=output,
     )
 
 
+def _controller_to_user_dict(profile: ControllerProfile) -> dict[str, Any]:
+    data = profile.model_dump(mode="python")
+    if data["type"] == "pd":
+        data["type"] = "pd_position"
+    return data
+
+
+def _actuator_to_user_dict(profile: ActuatorProfile) -> dict[str, Any]:
+    data = profile.model_dump(mode="python")
+    if data["type"] == "ideal_actuator":
+        data["type"] = "ideal_torque"
+    return data
+
+
+def _scene_to_user_dict(profile: SingleJointSceneProfile) -> dict[str, Any]:
+    return {
+        "type": profile.scene_type,
+        "inertia": profile.joint.inertia,
+        "damping": profile.joint.damping,
+        "gravity": profile.joint.gravity,
+        "q0": profile.joint.q0,
+        "dq0": profile.joint.dq0,
+    }
+
+
+def _test_to_user_dict(profile: TestProfile) -> tuple[dict[str, Any], dict[str, Any]]:
+    data = profile.model_dump(mode="python")
+    simulation = {
+        "duration": data.pop("duration"),
+        "dt": data.pop("dt"),
+    }
+    data["type"] = data.pop("test_type")
+    return data, simulation
+
+
 def run_config_to_dict(run_config: RunConfig) -> dict[str, Any]:
-    return run_config.model_dump(mode="python")
+    test_data, simulation_data = _test_to_user_dict(run_config.test)
+    return {
+        "system": {
+            "controller": _controller_to_user_dict(run_config.controller),
+            "actuator": _actuator_to_user_dict(run_config.actuator),
+        },
+        "scenario": {
+            "scene": _scene_to_user_dict(run_config.scene),
+            "test": test_data,
+            "simulation": simulation_data,
+            "logging": run_config.logging.model_dump(mode="python"),
+            "plots": run_config.plots.model_dump(mode="python"),
+            "output": run_config.output.model_dump(mode="python"),
+        },
+    }

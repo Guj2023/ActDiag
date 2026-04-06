@@ -51,15 +51,11 @@ def create_run_paths(project_root: Path, output_dir: Path | None = None) -> RunP
 
 def save_input_configs(
     run_paths: RunPaths,
-    actuator_path: Path,
-    controller_path: Path,
-    scene_path: Path,
-    test_path: Path,
+    system_path: Path,
+    scenario_path: Path,
 ) -> None:
-    shutil.copy2(actuator_path, run_paths.config_dir / "actuator.yaml")
-    shutil.copy2(controller_path, run_paths.config_dir / "controller.yaml")
-    shutil.copy2(scene_path, run_paths.config_dir / "scene.yaml")
-    shutil.copy2(test_path, run_paths.config_dir / "test.yaml")
+    shutil.copy2(system_path, run_paths.config_dir / "system.yaml")
+    shutil.copy2(scenario_path, run_paths.config_dir / "scenario.yaml")
 
 
 def save_resolved_config(run_paths: RunPaths, resolved_config: dict[str, Any]) -> None:
