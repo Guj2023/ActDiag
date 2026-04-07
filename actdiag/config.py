@@ -25,12 +25,24 @@ class IdealActuatorProfile(StrictModel):
     torque_limit: PositiveFloat
 
 
-ActuatorProfile = IdealActuatorProfile
+class LimitedTorqueActuatorProfile(StrictModel):
+    type: Literal["limited_torque"]
+    torque_limit: PositiveFloat
+
+
+ActuatorProfile = IdealActuatorProfile | LimitedTorqueActuatorProfile
 
 
 class PDControllerProfile(StrictModel):
     type: Literal["pd"]
     kp: NonNegativeFloat
+    kd: NonNegativeFloat
+
+
+class PIDControllerProfile(StrictModel):
+    type: Literal["pid"]
+    kp: NonNegativeFloat
+    ki: NonNegativeFloat
     kd: NonNegativeFloat
 
 
@@ -45,7 +57,10 @@ class NoneControllerProfile(StrictModel):
 
 
 ControllerProfile = (
-    PDControllerProfile | InverseDynamicsControllerProfile | NoneControllerProfile
+    PDControllerProfile
+    | PIDControllerProfile
+    | InverseDynamicsControllerProfile
+    | NoneControllerProfile
 )
 
 
@@ -104,12 +119,19 @@ class FrequencyResponseTestProfile(StrictModel):
     settle_cycles: int = Field(default=3, ge=0)
     offset: float = 0.0
 
-    @field_validator("offset")
+    @field_validator("amplitude", "offset")
     @classmethod
-    def validate_finite_offset(cls, value: float) -> float:
+    def validate_finite_signal(cls, value: float) -> float:
         if not math.isfinite(value):
             raise ValueError("must be finite")
         return value
+
+    @field_validator("frequencies")
+    @classmethod
+    def validate_finite_frequencies(cls, values: list[float]) -> list[float]:
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("frequencies must contain only finite values")
+        return values
 
     @model_validator(mode="after")
     def validate_cycles(self) -> "FrequencyResponseTestProfile":
@@ -201,7 +223,12 @@ class RunConfig(StrictModel):
             raise ValueError("controller type 'none' requires a torque trajectory test")
         if (
             isinstance(
-                self.controller, (PDControllerProfile, InverseDynamicsControllerProfile)
+                self.controller,
+                (
+                    PDControllerProfile,
+                    PIDControllerProfile,
+                    InverseDynamicsControllerProfile,
+                ),
             )
             and not position_test
         ):
@@ -233,9 +260,14 @@ def _parse_actuator_profile(data: dict[str, Any]) -> ActuatorProfile:
     normalized_type = {
         "ideal_torque": "ideal_actuator",
         "ideal_actuator": "ideal_actuator",
+        "limited_torque": "limited_torque",
     }.get(actuator_type)
     if normalized_type == "ideal_actuator":
         return IdealActuatorProfile.model_validate({**data, "type": normalized_type})
+    if normalized_type == "limited_torque":
+        return LimitedTorqueActuatorProfile.model_validate(
+            {**data, "type": normalized_type}
+        )
     raise ValueError("unsupported actuator type")
 
 
@@ -244,11 +276,15 @@ def _parse_controller_profile(data: dict[str, Any]) -> ControllerProfile:
     normalized_type = {
         "pd_position": "pd",
         "pd": "pd",
+        "pid_position": "pid",
+        "pid": "pid",
         "inverse_dynamics": "inverse_dynamics",
         "none": "none",
     }.get(controller_type)
     if normalized_type == "pd":
         return PDControllerProfile.model_validate({**data, "type": normalized_type})
+    if normalized_type == "pid":
+        return PIDControllerProfile.model_validate({**data, "type": normalized_type})
     if normalized_type == "inverse_dynamics":
         return InverseDynamicsControllerProfile.model_validate(
             {**data, "type": normalized_type}
@@ -357,6 +393,8 @@ def _controller_to_user_dict(profile: ControllerProfile) -> dict[str, Any]:
     data = profile.model_dump(mode="python")
     if data["type"] == "pd":
         data["type"] = "pd_position"
+    if data["type"] == "pid":
+        data["type"] = "pid_position"
     return data
 
 

@@ -105,7 +105,9 @@ def run_frequency_response_simulation(
         )
 
     return FrequencyResponseArtifacts(
-        summary=pd.DataFrame(summaries),
+        summary=pd.DataFrame(summaries).sort_values("frequency_hz").reset_index(
+            drop=True
+        ),
         per_frequency_timeseries=per_frequency_timeseries,
     )
 
@@ -120,7 +122,9 @@ def _simulate_signal_series(
     model = build_single_joint_model(run_config.scene, run_config.simulation.dt)
     data = initialize_scene_state(model, run_config.scene)
     actuator = build_actuator(run_config.actuator)
-    controller = build_controller(run_config.controller, model)
+    controller = build_controller(
+        run_config.controller, model, run_config.simulation.dt
+    )
     recorder = VideoRecorder(model, video_fps) if save_video else None
 
     records: dict[str, list[float]] = {
@@ -134,6 +138,8 @@ def _simulate_signal_series(
         "velocity_error": [],
         "tau_cmd": [],
         "tau_applied": [],
+        "integral_error": [],
+        "is_saturated": [],
     }
 
     final_index = len(signals.time) - 1
@@ -157,8 +163,8 @@ def _simulate_signal_series(
             qdd_des=qdd_des,
             tau_des=tau_des,
         )
-        tau_cmd = controller.compute(control_state)
-        tau_applied = actuator.apply(tau_cmd)
+        controller_output = controller.compute(control_state)
+        actuator_output = actuator.apply(controller_output.tau_cmd)
 
         records["time"].append(float(time_value))
         records["q"].append(q)
@@ -172,13 +178,15 @@ def _simulate_signal_series(
         records["velocity_error"].append(
             dq_des - dq if not pd.isna(dq_des) else float("nan")
         )
-        records["tau_cmd"].append(tau_cmd)
-        records["tau_applied"].append(tau_applied)
+        records["tau_cmd"].append(controller_output.tau_cmd)
+        records["tau_applied"].append(actuator_output.tau_applied)
+        records["integral_error"].append(controller_output.integral_error)
+        records["is_saturated"].append(actuator_output.is_saturated)
 
         if index == final_index:
             continue
 
-        data.qfrc_applied[0] = tau_applied
+        data.qfrc_applied[0] = actuator_output.tau_applied
         mujoco.mj_step(model, data)
         data.qfrc_applied[0] = 0.0
 
@@ -257,6 +265,7 @@ def _estimate_frequency_response(
     time_values = steady_state["time"].to_numpy()
     q_values = steady_state["q"].to_numpy()
     omega = 2.0 * np.pi * frequency_hz
+    # Fit q(t) ~= a*sin(wt) + b*cos(wt) + c over the settled window.
     design_matrix = np.column_stack(
         [
             np.sin(omega * time_values),

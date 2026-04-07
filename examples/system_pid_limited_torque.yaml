@@ -1,0 +1,9 @@
+controller:
+  type: pid_position
+  kp: 100.0
+  ki: 10.0
+  kd: 2.0
+
+actuator:
+  type: limited_torque
+  torque_limit: 40.0

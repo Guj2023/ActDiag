@@ -12,7 +12,9 @@ import pandas as pd
 from actdiag.config import PlotConfig
 
 
-def save_plots(timeseries: pd.DataFrame, figures_dir: Path, plot_config: PlotConfig) -> None:
+def save_plots(
+    timeseries: pd.DataFrame, figures_dir: Path, plot_config: PlotConfig
+) -> None:
     figures_dir.mkdir(parents=True, exist_ok=True)
 
     if plot_config.position:
@@ -62,16 +64,17 @@ def save_frequency_response_plots(
         return
 
     figures_dir.mkdir(parents=True, exist_ok=True)
+    ordered_summary = summary.sort_values("frequency_hz")
     _save_frequency_plot(
         figures_dir / "frequency_response_gain.png",
-        summary,
+        ordered_summary,
         value_column="gain",
         ylabel="Gain [-]",
         title="Gain vs Frequency",
     )
     _save_frequency_plot(
         figures_dir / "frequency_response_phase.png",
-        summary,
+        ordered_summary,
         value_column="phase_deg",
         ylabel="Phase [deg]",
         title="Phase vs Frequency",

@@ -12,6 +12,7 @@ from actdiag.config import (
 )
 from actdiag.logging_io import (
     create_run_paths,
+    frequency_slug,
     save_frequency_response_summary,
     save_frequency_response_timeseries,
     save_input_configs,
@@ -96,7 +97,7 @@ def handle_run(args: argparse.Namespace) -> int:
                 timeseries,
                 run_paths.figures_dir
                 / "frequency_response"
-                / _frequency_slug(frequency_hz),
+                / frequency_slug(frequency_hz),
                 run_config.plots,
             )
         save_frequency_response_plots(
@@ -145,7 +146,3 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-
-
-def _frequency_slug(frequency_hz: float) -> str:
-    return f"{frequency_hz:.3f}_hz".replace(".", "_")

@@ -15,6 +15,7 @@ test:
   offset: 0.0
 
 simulation:
+  # duration is derived automatically from frequencies and cycles_per_frequency
   dt: 0.001
 
 logging:

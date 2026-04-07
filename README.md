@@ -4,7 +4,7 @@ ActDiag is a minimal CLI tool for actuator diagnosis in simulation with MuJoCo. 
 
 ## Status
 
-`v0.3.0` is still an MVP. The user-facing configuration stays deliberately narrow:
+`v0.4.0` is still an MVP. The user-facing configuration stays deliberately narrow:
 
 - `system.yaml`
 - `scenario.yaml`
@@ -22,7 +22,7 @@ scenario.test
 For the current MVP, the intended defaults are:
 
 - controller type: `pd_position`
-- actuator type: `ideal_torque`
+- actuator type: `limited_torque`
 - scene type: `single_joint`
 - simulation engine: MuJoCo
 
@@ -77,9 +77,31 @@ controller:
   kd: 2.0
 
 actuator:
-  type: ideal_torque
+  type: limited_torque
   torque_limit: 40.0
 ```
+
+Supported controller types:
+
+- `pd_position`
+- `pid_position`
+
+Supported actuator types:
+
+- `ideal_torque`
+- `limited_torque`
+
+Controller meanings:
+
+- `pd_position`: `tau_cmd = kp * (q_des - q) + kd * (dq_des - dq)`
+- `pid_position`: `tau_cmd = kp * e + ki * integral_e + kd * de`
+
+Actuator meanings:
+
+- `limited_torque` clips `tau_cmd` into `[-torque_limit, +torque_limit]`
+- `ideal_torque` keeps the project's existing backward-compatible behavior and also clips with `torque_limit`
+
+In the logs, `tau_cmd` is the controller output and `tau_applied` is the actuator output after actuator constraints.
 
 ### Step test
 
@@ -202,12 +224,15 @@ Behavior:
 - each frequency is simulated separately from the same initial state
 - the first `settle_cycles` are discarded for estimation
 - the remaining cycles are fit against `sin(omega t)` and `cos(omega t)`
+- negative phase values indicate output lag, which matches the usual Bode-style convention
 
 Only `simulation.dt` is required for `frequency_response`. Total duration is derived automatically as:
 
 ```text
 sum(cycles_per_frequency / frequency_hz)
 ```
+
+Internally, each frequency still runs as its own simulation segment with a fresh reset. The derived duration is the total sweep duration recorded in the resolved config.
 
 The sweep summary is saved to `summary/frequency_response.csv` with:
 
@@ -225,6 +250,7 @@ Current validation includes:
 - `controller.type` must be supported
 - `actuator.type` must be supported
 - `kp >= 0`
+- `ki >= 0` for `pid_position`
 - `kd >= 0`
 - `torque_limit > 0`
 - `scene.type` must be `single_joint`
@@ -285,7 +311,7 @@ runs/
 Single-run CSV columns:
 
 ```text
-time,q,dq,q_des,dq_des,tau_des,position_error,velocity_error,tau_cmd,tau_applied
+time,q,dq,q_des,dq_des,tau_des,position_error,velocity_error,tau_cmd,tau_applied,integral_error,is_saturated
 ```
 
 Standard plots:
@@ -306,6 +332,8 @@ Frequency response plots:
 Example files are in `examples/`:
 
 - `examples/system_pd.yaml`
+- `examples/system_pd_limited_torque.yaml`
+- `examples/system_pid_limited_torque.yaml`
 - `examples/scenario_step.yaml`
 - `examples/scenario_sine.yaml`
 - `examples/scenario_frequency_response.yaml`

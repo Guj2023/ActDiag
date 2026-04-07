@@ -78,7 +78,7 @@ def save_frequency_response_timeseries(
     run_paths: RunPaths, frequency_hz: float, timeseries: pd.DataFrame
 ) -> Path:
     output_dir = (
-        run_paths.data_dir / "frequency_response" / _frequency_slug(frequency_hz)
+        run_paths.data_dir / "frequency_response" / frequency_slug(frequency_hz)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "timeseries.csv"
@@ -99,7 +99,7 @@ def save_frequency_response_summary(
     run_paths: RunPaths, summary: pd.DataFrame
 ) -> Path:
     output_path = run_paths.summary_dir / "frequency_response.csv"
-    summary.to_csv(output_path, index=False)
+    summary.sort_values("frequency_hz").to_csv(output_path, index=False)
     return output_path
 
 
@@ -110,5 +110,5 @@ def save_video(run_paths: RunPaths, frames: list, fps: int) -> Path:
     return output_path
 
 
-def _frequency_slug(frequency_hz: float) -> str:
+def frequency_slug(frequency_hz: float) -> str:
     return f"{frequency_hz:.3f}_hz".replace(".", "_")
