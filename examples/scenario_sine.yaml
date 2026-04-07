@@ -25,6 +25,7 @@ plots:
   torque: true
   error: true
   phase: true
+  frequency_response: false
 
 output:
   save_video: false

@@ -7,12 +7,14 @@ scene:
   dq0: 0.0
 
 test:
-  type: step
-  target: 0.5
-  start_time: 0.2
+  type: frequency_response
+  amplitude: 0.05
+  frequencies: [0.5, 1.0, 2.0, 4.0, 8.0]
+  cycles_per_frequency: 8
+  settle_cycles: 3
+  offset: 0.0
 
 simulation:
-  duration: 2.0
   dt: 0.001
 
 logging:
@@ -24,7 +26,7 @@ plots:
   torque: true
   error: true
   phase: true
-  frequency_response: false
+  frequency_response: true
 
 output:
   save_video: false

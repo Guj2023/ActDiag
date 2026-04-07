@@ -1,19 +1,15 @@
 # ActDiag
 
-ActDiag is a minimal CLI tool for actuator diagnosis in simulation with MuJoCo. The scope is narrow on purpose: run one controlled experiment, log the result, and save a few plots that make the actuator behavior easy to inspect.
+ActDiag is a minimal CLI tool for actuator diagnosis in simulation with MuJoCo. The scope is intentionally small: run one diagnostic scenario, log the response, and save a few plots that are easy to inspect.
 
 ## Status
 
-`v0.3.0` is still an MVP. The codebase keeps controller, actuator, scene, and test logic split internally, but the user-facing configuration is now reduced to two YAML files:
+`v0.3.0` is still an MVP. The user-facing configuration stays deliberately narrow:
 
 - `system.yaml`
 - `scenario.yaml`
 
-That keeps the tool small while making the experiment structure easier to read.
-
-## Core Idea
-
-The conceptual model is:
+Conceptually, a run is:
 
 ```text
 scenario.test
@@ -23,25 +19,14 @@ scenario.test
 -> logs / plots / outputs
 ```
 
-In this model:
-
-- the `system` profile is the thing being diagnosed
-- the `scenario` profile is the diagnostic condition
-
-Controller and actuator are separate concepts. They are not treated as one combined "PD actuator". The earlier simple behavior is better understood as:
-
-```text
-reference -> PD controller -> torque actuator -> plant
-```
-
-For the current MVP, that means:
+For the current MVP, the intended defaults are:
 
 - controller type: `pd_position`
 - actuator type: `ideal_torque`
+- scene type: `single_joint`
+- simulation engine: MuJoCo
 
 ## MVP Scope
-
-ActDiag uses two user-facing profiles per run.
 
 `system.yaml` contains:
 
@@ -52,46 +37,34 @@ ActDiag uses two user-facing profiles per run.
 
 - `scene`
 - `test`
-- `simulation` settings
-- `logging` settings
-- `plots` settings
-- `output` settings
+- `simulation`
+- `logging`
+- `plots`
+- `output`
 
-Supported MVP features:
+Supported test modes:
 
-- controller types: `pd_position`
-- actuator types: `ideal_torque`
-- scene types: `single_joint`
-- test types: `step`, `sine`
-- CSV time-series logging
-- diagnostic plots
-- optional video export
+- `step`
+- `sine`
+- `frequency_response`
 
-Explicit non-goals for the current MVP:
-
-- multi-DOF systems
-- contact-rich tasks
-- plugin systems
-- large framework abstractions
-- parameter sweeps
-- automatic diagnosis labels
-- GUI or web frontend
+Torque trajectory tests from earlier iterations are still accepted internally for compatibility, but the main MVP path is still position-reference diagnosis.
 
 ## CLI
 
-Primary command:
+Run a scenario:
 
 ```bash
 actdiag run --system system.yaml --scenario scenario.yaml
 ```
 
-With video:
+Export video for single-run tests:
 
 ```bash
 actdiag run --system system.yaml --scenario scenario.yaml --save-video
 ```
 
-The CLI is intentionally small. `actdiag run` is the only command that matters for the MVP.
+`frequency_response` does not export video in this MVP.
 
 ## Configuration
 
@@ -108,9 +81,7 @@ actuator:
   torque_limit: 40.0
 ```
 
-### `scenario.yaml`
-
-Step test example:
+### Step test
 
 ```yaml
 scene:
@@ -144,7 +115,29 @@ output:
   save_video: false
 ```
 
-Sine test example:
+Behavior:
+
+- before `start_time`, `q_des` stays at `0.0`
+- at `start_time`, `q_des` jumps to `target`
+- `dq_des` is logged as `0.0`
+
+Step runs also save `summary/step_metrics.json` with:
+
+- `steady_state_value`
+- `steady_state_error`
+- `peak_value`
+- `percent_overshoot`
+- `rise_time`
+- `settling_time`
+
+The definitions are intentionally simple and robust:
+
+- steady-state value is the mean of the final small response window
+- overshoot uses a basic relative measure against the target
+- rise time uses first 10% and 90% crossings
+- settling time uses a 5% band around the target
+
+### Sine test
 
 ```yaml
 scene:
@@ -164,6 +157,29 @@ test:
 simulation:
   duration: 2.0
   dt: 0.001
+```
+
+### Frequency response test
+
+```yaml
+scene:
+  type: single_joint
+  inertia: 0.05
+  damping: 0.1
+  gravity: false
+  q0: 0.0
+  dq0: 0.0
+
+test:
+  type: frequency_response
+  amplitude: 0.05
+  frequencies: [0.5, 1.0, 2.0, 4.0, 8.0]
+  cycles_per_frequency: 8
+  settle_cycles: 3
+  offset: 0.0
+
+simulation:
+  dt: 0.001
 
 logging:
   save_csv: true
@@ -174,27 +190,57 @@ plots:
   torque: true
   error: true
   phase: true
+  frequency_response: true
 
 output:
   save_video: false
 ```
 
+Behavior:
+
+- ActDiag runs one sinusoidal reference per frequency
+- each frequency is simulated separately from the same initial state
+- the first `settle_cycles` are discarded for estimation
+- the remaining cycles are fit against `sin(omega t)` and `cos(omega t)`
+
+Only `simulation.dt` is required for `frequency_response`. Total duration is derived automatically as:
+
+```text
+sum(cycles_per_frequency / frequency_hz)
+```
+
+The sweep summary is saved to `summary/frequency_response.csv` with:
+
+- `frequency_hz`
+- `input_amplitude`
+- `output_amplitude`
+- `gain`
+- `phase_rad`
+- `phase_deg`
+
 ## Validation
 
-Recommended validation rules:
+Current validation includes:
 
 - `controller.type` must be supported
 - `actuator.type` must be supported
 - `kp >= 0`
 - `kd >= 0`
 - `torque_limit > 0`
-- `scene.type` must be supported
+- `scene.type` must be `single_joint`
 - `inertia > 0`
 - `damping >= 0`
-- `simulation.duration > 0`
 - `simulation.dt > 0`
-- `step.start_time >= 0`
-- `sine.frequency > 0`
+- step: `target` finite, `start_time >= 0`
+- sine: `frequency > 0`
+- frequency response:
+  - `amplitude > 0`
+  - `frequencies` must be a non-empty list of positive finite numbers
+  - `cycles_per_frequency >= 1`
+  - `settle_cycles >= 0`
+  - `settle_cycles < cycles_per_frequency`
+
+For single-run tests such as `step` and `sine`, `simulation.duration` is required.
 
 ## Outputs
 
@@ -202,32 +248,67 @@ Each run produces a compact directory:
 
 ```text
 runs/
-  2026-04-06_191530/
+  2026-04-07_201500/
     config/
       system.yaml
       scenario.yaml
       resolved.yaml
     data/
       timeseries.csv
+      frequency_response/
+        0_500_hz/
+          timeseries.csv
+        1_000_hz/
+          timeseries.csv
     figures/
       position.png
       velocity.png
       torque.png
       error.png
       phase.png
+      frequency_response_gain.png
+      frequency_response_phase.png
+      frequency_response/
+        0_500_hz/
+          position.png
+          velocity.png
+          torque.png
+          error.png
+          phase.png
+    summary/
+      step_metrics.json
+      frequency_response.csv
     video/
       sim.mp4
 ```
 
-`resolved.yaml` matters because it records the effective configuration that actually produced the run.
-
-Expected CSV columns:
+Single-run CSV columns:
 
 ```text
 time,q,dq,q_des,dq_des,tau_des,position_error,velocity_error,tau_cmd,tau_applied
 ```
 
-The primary artifacts are still the raw logs. Plots and video are derived outputs.
+Standard plots:
+
+- position vs time
+- velocity vs time
+- torque vs time
+- error vs time
+- phase plot
+
+Frequency response plots:
+
+- gain vs frequency
+- phase vs frequency
+
+## Examples
+
+Example files are in `examples/`:
+
+- `examples/system_pd.yaml`
+- `examples/scenario_step.yaml`
+- `examples/scenario_sine.yaml`
+- `examples/scenario_frequency_response.yaml`
 
 ## Installation
 
@@ -247,58 +328,3 @@ source .venv/bin/activate
 pip install -U pip
 pip install -e .
 ```
-
-## Package Layout
-
-A reasonable MVP package layout is:
-
-```text
-actdiag/
-  __init__.py
-  cli.py
-  config.py
-  signals.py
-  controller.py
-  actuator.py
-  scene.py
-  simulate.py
-  logging_io.py
-  plotting.py
-```
-
-Example config files can stay simple:
-
-```text
-examples/
-  system.yaml
-  scenario_step.yaml
-  scenario_sine.yaml
-```
-
-## Development Checklist
-
-- keep two user-facing profiles: `system.yaml` and `scenario.yaml`
-- keep controller and actuator conceptually separate inside `system.yaml`
-- keep scene and test separate inside `scenario.yaml`
-- keep the simulation path explicit: test -> controller -> actuator -> scene
-- keep schemas strict and validation simple
-- keep outputs reproducible with copied inputs and a resolved config
-
-## Roadmap
-
-Near-term work that still fits the MVP:
-
-- tighten schema validation and error messages
-- add a few compact summary metrics on top of the existing logs
-- improve plot readability without expanding the architecture
-- add one or two more actuator or scene variants only if the current pipeline stays clean
-
-Longer-term vision, still grounded:
-
-- make actuator diagnosis runs easier to reproduce
-- keep the experiment definition explicit and small
-- add capability only when it improves diagnosis clarity, not because the project should become a framework
-
-## License
-
-TBD. MIT would be a reasonable default if the project is published later.

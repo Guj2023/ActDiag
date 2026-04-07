@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from actdiag.config import (
+    FrequencyResponseTestProfile,
+    SimulationConfig,
     SineTestProfile,
     StepTestProfile,
     TestProfile,
@@ -22,20 +24,41 @@ class SignalSeries:
     tau_des: np.ndarray
 
 
-def build_signal_series(test_profile: TestProfile) -> SignalSeries:
+def build_signal_series(
+    test_profile: TestProfile, simulation: SimulationConfig
+) -> SignalSeries:
     if isinstance(test_profile, StepTestProfile):
-        return _build_step_signal(test_profile)
+        return _build_step_signal(test_profile, simulation)
     if isinstance(test_profile, SineTestProfile):
-        return _build_sine_signal(test_profile)
+        return _build_sine_signal(test_profile, simulation)
     if isinstance(test_profile, TorqueStepTestProfile):
-        return _build_torque_step_signal(test_profile)
+        return _build_torque_step_signal(test_profile, simulation)
     if isinstance(test_profile, TorqueSineTestProfile):
-        return _build_torque_sine_signal(test_profile)
+        return _build_torque_sine_signal(test_profile, simulation)
+    if isinstance(test_profile, FrequencyResponseTestProfile):
+        raise TypeError("frequency_response uses build_frequency_response_signal()")
     raise TypeError(f"unsupported test profile: {type(test_profile)!r}")
 
 
-def _build_step_signal(profile: StepTestProfile) -> SignalSeries:
-    time = np.arange(0.0, profile.duration + (profile.dt * 0.5), profile.dt)
+def build_frequency_response_signal(
+    profile: FrequencyResponseTestProfile, *, dt: float, frequency_hz: float
+) -> SignalSeries:
+    duration = profile.cycles_per_frequency / frequency_hz
+    time = _build_time_vector(duration, dt)
+    omega = 2.0 * np.pi * frequency_hz
+    q_des = profile.offset + (profile.amplitude * np.sin(omega * time))
+    dq_des = profile.amplitude * omega * np.cos(omega * time)
+    qdd_des = -(profile.amplitude * (omega**2) * np.sin(omega * time))
+    tau_des = np.full_like(time, np.nan)
+    return SignalSeries(
+        time=time, q_des=q_des, dq_des=dq_des, qdd_des=qdd_des, tau_des=tau_des
+    )
+
+
+def _build_step_signal(
+    profile: StepTestProfile, simulation: SimulationConfig
+) -> SignalSeries:
+    time = _build_time_vector(_require_duration(simulation), simulation.dt)
     q_des = np.where(time >= profile.start_time, profile.target, 0.0)
     dq_des = np.zeros_like(time)
     qdd_des = np.zeros_like(time)
@@ -45,8 +68,10 @@ def _build_step_signal(profile: StepTestProfile) -> SignalSeries:
     )
 
 
-def _build_sine_signal(profile: SineTestProfile) -> SignalSeries:
-    time = np.arange(0.0, profile.duration + (profile.dt * 0.5), profile.dt)
+def _build_sine_signal(
+    profile: SineTestProfile, simulation: SimulationConfig
+) -> SignalSeries:
+    time = _build_time_vector(_require_duration(simulation), simulation.dt)
     omega = 2.0 * np.pi * profile.frequency
     q_des = profile.offset + (profile.amplitude * np.sin(omega * time))
     dq_des = profile.amplitude * omega * np.cos(omega * time)
@@ -57,8 +82,10 @@ def _build_sine_signal(profile: SineTestProfile) -> SignalSeries:
     )
 
 
-def _build_torque_step_signal(profile: TorqueStepTestProfile) -> SignalSeries:
-    time = np.arange(0.0, profile.duration + (profile.dt * 0.5), profile.dt)
+def _build_torque_step_signal(
+    profile: TorqueStepTestProfile, simulation: SimulationConfig
+) -> SignalSeries:
+    time = _build_time_vector(_require_duration(simulation), simulation.dt)
     tau_des = np.where(time >= profile.start_time, profile.target_torque, 0.0)
     q_des = np.full_like(time, np.nan)
     dq_des = np.full_like(time, np.nan)
@@ -68,8 +95,10 @@ def _build_torque_step_signal(profile: TorqueStepTestProfile) -> SignalSeries:
     )
 
 
-def _build_torque_sine_signal(profile: TorqueSineTestProfile) -> SignalSeries:
-    time = np.arange(0.0, profile.duration + (profile.dt * 0.5), profile.dt)
+def _build_torque_sine_signal(
+    profile: TorqueSineTestProfile, simulation: SimulationConfig
+) -> SignalSeries:
+    time = _build_time_vector(_require_duration(simulation), simulation.dt)
     omega = 2.0 * np.pi * profile.frequency
     tau_des = profile.offset + (profile.amplitude * np.sin(omega * time))
     q_des = np.full_like(time, np.nan)
@@ -78,3 +107,13 @@ def _build_torque_sine_signal(profile: TorqueSineTestProfile) -> SignalSeries:
     return SignalSeries(
         time=time, q_des=q_des, dq_des=dq_des, qdd_des=qdd_des, tau_des=tau_des
     )
+
+
+def _build_time_vector(duration: float, dt: float) -> np.ndarray:
+    return np.arange(0.0, duration + (dt * 0.5), dt)
+
+
+def _require_duration(simulation: SimulationConfig) -> float:
+    if simulation.duration is None:
+        raise ValueError("simulation.duration is required for this test type")
+    return simulation.duration

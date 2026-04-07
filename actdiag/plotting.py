@@ -50,17 +50,32 @@ def save_plots(timeseries: pd.DataFrame, figures_dir: Path, plot_config: PlotCon
             title="Torque vs Time",
         )
     if plot_config.error:
-        _save_line_plot(
-            figures_dir / "error.png",
-            timeseries["time"],
-            _defined_series(
-                ("Position error", timeseries["position_error"]),
-            ),
-            ylabel="Position error [rad]",
-            title="Position Error vs Time",
-        )
+        _save_error_plot(figures_dir / "error.png", timeseries)
     if plot_config.phase:
         _save_phase_plot(figures_dir / "phase.png", timeseries)
+
+
+def save_frequency_response_plots(
+    summary: pd.DataFrame, figures_dir: Path, plot_config: PlotConfig
+) -> None:
+    if not plot_config.frequency_response:
+        return
+
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    _save_frequency_plot(
+        figures_dir / "frequency_response_gain.png",
+        summary,
+        value_column="gain",
+        ylabel="Gain [-]",
+        title="Gain vs Frequency",
+    )
+    _save_frequency_plot(
+        figures_dir / "frequency_response_phase.png",
+        summary,
+        value_column="phase_deg",
+        ylabel="Phase [deg]",
+        title="Phase vs Frequency",
+    )
 
 
 def _save_line_plot(
@@ -96,6 +111,24 @@ def _save_line_plot(
     plt.close(figure)
 
 
+def _save_error_plot(path: Path, timeseries: pd.DataFrame) -> None:
+    figure, axes = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+
+    axes[0].plot(timeseries["time"], timeseries["position_error"], linewidth=2)
+    axes[0].set_ylabel("Pos. error [rad]")
+    axes[0].set_title("Error vs Time")
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].plot(timeseries["time"], timeseries["velocity_error"], linewidth=2)
+    axes[1].set_xlabel("Time [s]")
+    axes[1].set_ylabel("Vel. error [rad/s]")
+    axes[1].grid(True, alpha=0.3)
+
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
 def _save_phase_plot(path: Path, timeseries: pd.DataFrame) -> None:
     figure, axis = plt.subplots(figsize=(5.5, 5.5))
     axis.plot(timeseries["q"], timeseries["dq"], linewidth=2)
@@ -103,6 +136,30 @@ def _save_phase_plot(path: Path, timeseries: pd.DataFrame) -> None:
     axis.set_ylabel("Velocity [rad/s]")
     axis.set_title("Phase Plot")
     axis.grid(True, alpha=0.3)
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
+def _save_frequency_plot(
+    path: Path,
+    summary: pd.DataFrame,
+    *,
+    value_column: str,
+    ylabel: str,
+    title: str,
+) -> None:
+    figure, axis = plt.subplots(figsize=(7, 4.5))
+    axis.semilogx(
+        summary["frequency_hz"],
+        summary[value_column],
+        marker="o",
+        linewidth=2,
+    )
+    axis.set_xlabel("Frequency [Hz]")
+    axis.set_ylabel(ylabel)
+    axis.set_title(title)
+    axis.grid(True, which="both", alpha=0.3)
     figure.tight_layout()
     figure.savefig(path, dpi=150)
     plt.close(figure)

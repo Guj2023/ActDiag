@@ -73,8 +73,6 @@ class StepTestProfile(StrictModel):
     test_type: Literal["step"]
     target: float
     start_time: NonNegativeFloat = 0.0
-    duration: PositiveFloat
-    dt: PositiveFloat
 
     @field_validator("target")
     @classmethod
@@ -89,8 +87,6 @@ class SineTestProfile(StrictModel):
     amplitude: float = Field(..., description="Peak position amplitude in radians.")
     frequency: PositiveFloat
     offset: float = 0.0
-    duration: PositiveFloat
-    dt: PositiveFloat
 
     @field_validator("amplitude", "offset")
     @classmethod
@@ -100,12 +96,32 @@ class SineTestProfile(StrictModel):
         return value
 
 
+class FrequencyResponseTestProfile(StrictModel):
+    test_type: Literal["frequency_response"]
+    amplitude: PositiveFloat
+    frequencies: list[PositiveFloat] = Field(..., min_length=1)
+    cycles_per_frequency: int = Field(default=8, ge=1)
+    settle_cycles: int = Field(default=3, ge=0)
+    offset: float = 0.0
+
+    @field_validator("offset")
+    @classmethod
+    def validate_finite_offset(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def validate_cycles(self) -> "FrequencyResponseTestProfile":
+        if self.settle_cycles >= self.cycles_per_frequency:
+            raise ValueError("settle_cycles must be smaller than cycles_per_frequency")
+        return self
+
+
 class TorqueStepTestProfile(StrictModel):
     test_type: Literal["torque_step"]
     target_torque: float
     start_time: NonNegativeFloat = 0.0
-    duration: PositiveFloat
-    dt: PositiveFloat
 
     @field_validator("target_torque")
     @classmethod
@@ -120,8 +136,6 @@ class TorqueSineTestProfile(StrictModel):
     amplitude: float
     frequency: PositiveFloat
     offset: float = 0.0
-    duration: PositiveFloat
-    dt: PositiveFloat
 
     @field_validator("amplitude", "offset")
     @classmethod
@@ -129,6 +143,11 @@ class TorqueSineTestProfile(StrictModel):
         if not math.isfinite(value):
             raise ValueError("must be finite")
         return value
+
+
+class SimulationConfig(StrictModel):
+    duration: PositiveFloat | None = None
+    dt: PositiveFloat
 
 
 class LoggingConfig(StrictModel):
@@ -141,15 +160,22 @@ class PlotConfig(StrictModel):
     torque: bool = True
     error: bool = True
     phase: bool = True
+    frequency_response: bool = True
 
 
 class OutputConfig(StrictModel):
     save_video: bool = False
 
 
-PositionTestProfile = StepTestProfile | SineTestProfile
+PositionTestProfile = StepTestProfile | SineTestProfile | FrequencyResponseTestProfile
 TorqueTestProfile = TorqueStepTestProfile | TorqueSineTestProfile
 TestProfile = PositionTestProfile | TorqueTestProfile
+
+
+def derive_frequency_response_duration(profile: FrequencyResponseTestProfile) -> float:
+    return sum(
+        profile.cycles_per_frequency / frequency for frequency in profile.frequencies
+    )
 
 
 class RunConfig(StrictModel):
@@ -157,13 +183,16 @@ class RunConfig(StrictModel):
     controller: ControllerProfile
     scene: SingleJointSceneProfile
     test: TestProfile
+    simulation: SimulationConfig
     logging: LoggingConfig = LoggingConfig()
     plots: PlotConfig = PlotConfig()
     output: OutputConfig = OutputConfig()
 
     @model_validator(mode="after")
     def validate_controller_test_pairing(self) -> "RunConfig":
-        position_test = isinstance(self.test, (StepTestProfile, SineTestProfile))
+        position_test = isinstance(
+            self.test, (StepTestProfile, SineTestProfile, FrequencyResponseTestProfile)
+        )
         torque_test = isinstance(
             self.test, (TorqueStepTestProfile, TorqueSineTestProfile)
         )
@@ -179,6 +208,12 @@ class RunConfig(StrictModel):
             raise ValueError(
                 f"controller type '{self.controller.type}' requires a position trajectory test"
             )
+
+        if isinstance(self.test, FrequencyResponseTestProfile):
+            self.simulation.duration = derive_frequency_response_duration(self.test)
+        elif self.simulation.duration is None:
+            raise ValueError("simulation.duration is required for this test type")
+
         return self
 
 
@@ -245,16 +280,24 @@ def _parse_scene_profile(data: dict[str, Any]) -> SingleJointSceneProfile:
     return SingleJointSceneProfile.model_validate(scene_data)
 
 
-def _merge_simulation_settings(
+def _normalize_test_and_simulation_data(
     test_data: dict[str, Any], simulation_data: dict[str, Any]
-) -> dict[str, Any]:
-    merged = dict(test_data)
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    normalized_test = dict(test_data)
+    normalized_simulation = dict(simulation_data)
+
     for key in ("duration", "dt"):
-        if key in merged and key in simulation_data and merged[key] != simulation_data[key]:
-            raise ValueError(f"conflicting values for test.{key} and simulation.{key}")
-        if key not in merged and key in simulation_data:
-            merged[key] = simulation_data[key]
-    return merged
+        if key in normalized_test:
+            if (
+                key in normalized_simulation
+                and normalized_simulation[key] != normalized_test[key]
+            ):
+                raise ValueError(
+                    f"conflicting values for test.{key} and simulation.{key}"
+                )
+            normalized_simulation.setdefault(key, normalized_test.pop(key))
+
+    return normalized_test, normalized_simulation
 
 
 def _parse_test_profile(data: dict[str, Any]) -> TestProfile:
@@ -263,6 +306,8 @@ def _parse_test_profile(data: dict[str, Any]) -> TestProfile:
         return StepTestProfile.model_validate(data)
     if test_type == "sine":
         return SineTestProfile.model_validate(data)
+    if test_type == "frequency_response":
+        return FrequencyResponseTestProfile.model_validate(data)
     if test_type == "torque_step":
         return TorqueStepTestProfile.model_validate(data)
     if test_type == "torque_sine":
@@ -270,12 +315,9 @@ def _parse_test_profile(data: dict[str, Any]) -> TestProfile:
     raise ValueError("unsupported test type")
 
 
-def _parse_user_test_profile(
-    test_data: dict[str, Any], simulation_data: dict[str, Any]
-) -> TestProfile:
-    merged_data = _merge_simulation_settings(test_data, simulation_data)
-    normalized_type = merged_data.get("type", merged_data.get("test_type"))
-    normalized_data = dict(merged_data)
+def _parse_user_test_profile(test_data: dict[str, Any]) -> TestProfile:
+    normalized_type = test_data.get("type", test_data.get("test_type"))
+    normalized_data = dict(test_data)
     normalized_data.pop("type", None)
     normalized_data["test_type"] = normalized_type
     return _parse_test_profile(normalized_data)
@@ -285,21 +327,26 @@ def load_run_config(system_path: Path, scenario_path: Path) -> RunConfig:
     system_data = _load_yaml(system_path)
     scenario_data = _load_yaml(scenario_path)
 
-    controller = _parse_controller_profile(system_data.get("controller", {}))
-    actuator = _parse_actuator_profile(system_data.get("actuator", {}))
-    scene = _parse_scene_profile(scenario_data.get("scene", {}))
-    test = _parse_user_test_profile(
-        scenario_data.get("test", {}), scenario_data.get("simulation", {})
+    test_data, simulation_data = _normalize_test_and_simulation_data(
+        scenario_data.get("test", {}) or {},
+        scenario_data.get("simulation", {}) or {},
     )
-    logging = LoggingConfig.model_validate(scenario_data.get("logging", {}))
-    plots = PlotConfig.model_validate(scenario_data.get("plots", {}))
-    output = OutputConfig.model_validate(scenario_data.get("output", {}))
+
+    controller = _parse_controller_profile(system_data.get("controller", {}) or {})
+    actuator = _parse_actuator_profile(system_data.get("actuator", {}) or {})
+    scene = _parse_scene_profile(scenario_data.get("scene", {}) or {})
+    test = _parse_user_test_profile(test_data)
+    simulation = SimulationConfig.model_validate(simulation_data)
+    logging = LoggingConfig.model_validate(scenario_data.get("logging", {}) or {})
+    plots = PlotConfig.model_validate(scenario_data.get("plots", {}) or {})
+    output = OutputConfig.model_validate(scenario_data.get("output", {}) or {})
 
     return RunConfig(
         actuator=actuator,
         controller=controller,
         scene=scene,
         test=test,
+        simulation=simulation,
         logging=logging,
         plots=plots,
         output=output,
@@ -331,18 +378,13 @@ def _scene_to_user_dict(profile: SingleJointSceneProfile) -> dict[str, Any]:
     }
 
 
-def _test_to_user_dict(profile: TestProfile) -> tuple[dict[str, Any], dict[str, Any]]:
+def _test_to_user_dict(profile: TestProfile) -> dict[str, Any]:
     data = profile.model_dump(mode="python")
-    simulation = {
-        "duration": data.pop("duration"),
-        "dt": data.pop("dt"),
-    }
     data["type"] = data.pop("test_type")
-    return data, simulation
+    return data
 
 
 def run_config_to_dict(run_config: RunConfig) -> dict[str, Any]:
-    test_data, simulation_data = _test_to_user_dict(run_config.test)
     return {
         "system": {
             "controller": _controller_to_user_dict(run_config.controller),
@@ -350,8 +392,8 @@ def run_config_to_dict(run_config: RunConfig) -> dict[str, Any]:
         },
         "scenario": {
             "scene": _scene_to_user_dict(run_config.scene),
-            "test": test_data,
-            "simulation": simulation_data,
+            "test": _test_to_user_dict(run_config.test),
+            "simulation": run_config.simulation.model_dump(mode="python"),
             "logging": run_config.logging.model_dump(mode="python"),
             "plots": run_config.plots.model_dump(mode="python"),
             "output": run_config.output.model_dump(mode="python"),

@@ -5,16 +5,23 @@ from pathlib import Path
 import sys
 
 from actdiag import __version__
-from actdiag.config import load_run_config, run_config_to_dict
+from actdiag.config import (
+    FrequencyResponseTestProfile,
+    load_run_config,
+    run_config_to_dict,
+)
 from actdiag.logging_io import (
     create_run_paths,
+    save_frequency_response_summary,
+    save_frequency_response_timeseries,
     save_input_configs,
     save_resolved_config,
+    save_step_metrics,
     save_timeseries,
     save_video,
 )
-from actdiag.plotting import save_plots
-from actdiag.simulate import run_simulation
+from actdiag.plotting import save_frequency_response_plots, save_plots
+from actdiag.simulate import run_frequency_response_simulation, run_simulation
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,6 +78,37 @@ def handle_run(args: argparse.Namespace) -> int:
 
     should_save_video = bool(args.save_video or run_config.output.save_video)
 
+    if isinstance(run_config.test, FrequencyResponseTestProfile):
+        if should_save_video:
+            raise ValueError(
+                "video export is not supported for frequency_response tests"
+            )
+
+        artifacts = run_frequency_response_simulation(run_config)
+        summary_path = save_frequency_response_summary(run_paths, artifacts.summary)
+
+        if run_config.logging.save_csv:
+            for frequency_hz, timeseries in artifacts.per_frequency_timeseries.items():
+                save_frequency_response_timeseries(run_paths, frequency_hz, timeseries)
+
+        for frequency_hz, timeseries in artifacts.per_frequency_timeseries.items():
+            save_plots(
+                timeseries,
+                run_paths.figures_dir
+                / "frequency_response"
+                / _frequency_slug(frequency_hz),
+                run_config.plots,
+            )
+        save_frequency_response_plots(
+            artifacts.summary,
+            run_paths.figures_dir,
+            run_config.plots,
+        )
+
+        print(f"Run complete: {run_paths.run_dir}")
+        print(f"Frequency response summary: {summary_path}")
+        return 0
+
     artifacts = run_simulation(
         run_config, save_video=should_save_video, video_fps=args.video_fps
     )
@@ -78,6 +116,10 @@ def handle_run(args: argparse.Namespace) -> int:
     if run_config.logging.save_csv:
         csv_path = save_timeseries(run_paths, artifacts.timeseries)
     save_plots(artifacts.timeseries, run_paths.figures_dir, run_config.plots)
+
+    step_metrics_path = None
+    if artifacts.summary_metrics is not None:
+        step_metrics_path = save_step_metrics(run_paths, artifacts.summary_metrics)
 
     if should_save_video:
         if artifacts.video_frames is None or artifacts.video_fps is None:
@@ -87,6 +129,8 @@ def handle_run(args: argparse.Namespace) -> int:
     print(f"Run complete: {run_paths.run_dir}")
     if csv_path is not None:
         print(f"Timeseries: {csv_path}")
+    if step_metrics_path is not None:
+        print(f"Step metrics: {step_metrics_path}")
     return 0
 
 
@@ -101,3 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+
+def _frequency_slug(frequency_hz: float) -> str:
+    return f"{frequency_hz:.3f}_hz".replace(".", "_")
