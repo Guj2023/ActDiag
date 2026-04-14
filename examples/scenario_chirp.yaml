@@ -1,0 +1,20 @@
+scene:
+  type: single_joint
+  inertia: 0.05
+  damping: 0.1
+  gravity: false
+
+test:
+  type: chirp
+  amplitude: 0.1
+  f0: 0.5
+  f1: 5.0
+  duration: 5.0
+  offset: 0.0
+  sweep: linear
+
+simulation:
+  dt: 0.001
+
+logging:
+  save_csv: true

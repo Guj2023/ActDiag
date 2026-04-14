@@ -79,13 +79,14 @@ fit:
 ```
 
 ### Reference Data (`reference.csv`)
-For the `fit` command, you need a CSV file with your recorded data. 
+For the `fit` command, you can provide a CSV file with your recorded data. **This argument is optional.**
 
-**Required columns:**
-- `time`: Time in seconds.
+- **If provided:** It must contain at least a `time` column. Missing columns for `q`, `dq`, or `tau_applied` will default to `0.0`.
+- **If NOT provided:** `actdiag` will use the **Desired trajectory** (the target signals defined in your scenario) as the reference for fitting.
+
+**Column names used for cost calculation:**
+- `time`: Time in seconds (Required).
 - `q`: Position in radians.
-
-**Optional (used for cost calculation if present):**
 - `dq`: Velocity in radians per second.
 - `tau_applied`: Torque applied in Newton-meters.
 
@@ -114,3 +115,4 @@ Every time you run `actdiag`, it creates a folder with:
 ## ⚙️ Requirements
 - Python 3.10+
 - MuJoCo, NumPy, Pandas, Matplotlib, Pydantic, PyYAML
+

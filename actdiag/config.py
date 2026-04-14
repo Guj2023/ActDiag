@@ -111,6 +111,29 @@ class SineTestProfile(StrictModel):
         return value
 
 
+class ChirpTestProfile(StrictModel):
+    test_type: Literal["chirp"]
+    amplitude: PositiveFloat
+    f0: PositiveFloat
+    f1: PositiveFloat
+    duration: PositiveFloat
+    offset: float = 0.0
+    sweep: Literal["linear", "log"] = "linear"
+
+    @field_validator("offset")
+    @classmethod
+    def validate_finite_offset(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def validate_frequencies(self) -> "ChirpTestProfile":
+        if self.f1 < self.f0:
+            raise ValueError("f1 must be greater than or equal to f0")
+        return self
+
+
 class FrequencyResponseTestProfile(StrictModel):
     test_type: Literal["frequency_response"]
     amplitude: PositiveFloat
@@ -189,7 +212,9 @@ class OutputConfig(StrictModel):
     save_video: bool = False
 
 
-PositionTestProfile = StepTestProfile | SineTestProfile | FrequencyResponseTestProfile
+PositionTestProfile = (
+    StepTestProfile | SineTestProfile | ChirpTestProfile | FrequencyResponseTestProfile
+)
 TorqueTestProfile = TorqueStepTestProfile | TorqueSineTestProfile
 TestProfile = PositionTestProfile | TorqueTestProfile
 
@@ -213,7 +238,13 @@ class RunConfig(StrictModel):
     @model_validator(mode="after")
     def validate_controller_test_pairing(self) -> "RunConfig":
         position_test = isinstance(
-            self.test, (StepTestProfile, SineTestProfile, FrequencyResponseTestProfile)
+            self.test,
+            (
+                StepTestProfile,
+                SineTestProfile,
+                ChirpTestProfile,
+                FrequencyResponseTestProfile,
+            ),
         )
         torque_test = isinstance(
             self.test, (TorqueStepTestProfile, TorqueSineTestProfile)
@@ -342,6 +373,8 @@ def _parse_test_profile(data: dict[str, Any]) -> TestProfile:
         return StepTestProfile.model_validate(data)
     if test_type == "sine":
         return SineTestProfile.model_validate(data)
+    if test_type == "chirp":
+        return ChirpTestProfile.model_validate(data)
     if test_type == "frequency_response":
         return FrequencyResponseTestProfile.model_validate(data)
     if test_type == "torque_step":
@@ -367,6 +400,11 @@ def load_run_config(system_path: Path, scenario_path: Path) -> RunConfig:
         scenario_data.get("test", {}) or {},
         scenario_data.get("simulation", {}) or {},
     )
+
+    # For chirp, we need duration in the test profile as well
+    if test_data.get("type") == "chirp" or test_data.get("test_type") == "chirp":
+        if "duration" in simulation_data and "duration" not in test_data:
+            test_data["duration"] = simulation_data["duration"]
 
     controller = _parse_controller_profile(system_data.get("controller", {}) or {})
     actuator = _parse_actuator_profile(system_data.get("actuator", {}) or {})

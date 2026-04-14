@@ -26,8 +26,8 @@ class EvaluationResult:
 
 def load_reference(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
-    if "time" not in df.columns or "q" not in df.columns:
-        raise ValueError(f"Reference CSV {path} must contain 'time' and 'q' columns")
+    if "time" not in df.columns:
+        raise ValueError(f"Reference CSV {path} must contain 'time' column")
     return df
 
 
@@ -42,7 +42,11 @@ def interpolate_reference(
             column_data = reference[column].to_numpy()
             results[column] = np.interp(simulation_times, ref_time, column_data)
 
-    return pd.DataFrame(results)
+    df = pd.DataFrame(results)
+    # Ensure q column exists for evaluate_sample
+    if "q" not in df.columns:
+        df["q"] = 0.0
+    return df
 
 
 def set_nested_attr(obj: Any, path: str, value: Any) -> None:
@@ -72,24 +76,29 @@ def evaluate_sample(
             return _failure_result(sample)
 
         # Trajectory Error
+        # Use 0.0 as fallback for q reference if it contains NaNs (e.g. from a torque test)
+        ref_q_values = reference_interpolated["q"].fillna(0.0).to_numpy()
         mse_q = float(
-            np.mean((timeseries["q"] - reference_interpolated["q"]) ** 2)
+            np.mean((timeseries["q"] - ref_q_values) ** 2)
         )
         
         mse_dq = 0.0
-        if "dq" in reference_interpolated.columns:
-            mse_dq = float(
-                np.mean((timeseries["dq"] - reference_interpolated["dq"]) ** 2)
-            )
+        # If 'dq' is missing in reference, or is all NaN, use 0 as reference
+        ref_dq = reference_interpolated.get("dq")
+        if ref_dq is not None:
+            ref_dq_values = ref_dq.fillna(0.0).to_numpy()
+            mse_dq = float(np.mean((timeseries["dq"] - ref_dq_values) ** 2))
+        else:
+            mse_dq = float(np.mean(timeseries["dq"] ** 2))
 
         mse_tau = 0.0
-        if "tau_applied" in reference_interpolated.columns:
-            mse_tau = float(
-                np.mean(
-                    (timeseries["tau_applied"] - reference_interpolated["tau_applied"])
-                    ** 2
-                )
-            )
+        # If 'tau_applied' is missing in reference, or is all NaN, use 0 as reference
+        ref_tau = reference_interpolated.get("tau_applied")
+        if ref_tau is not None:
+            ref_tau_values = ref_tau.fillna(0.0).to_numpy()
+            mse_tau = float(np.mean((timeseries["tau_applied"] - ref_tau_values) ** 2))
+        else:
+            mse_tau = float(np.mean(timeseries["tau_applied"] ** 2))
 
         # Metric Error
         metric_error = 0.0

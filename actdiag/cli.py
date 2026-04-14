@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--scenario", required=True, type=Path, help="Scenario YAML profile."
     )
     fit_parser.add_argument(
-        "--reference", required=True, type=Path, help="Reference CSV file."
+        "--reference", type=Path, help="Optional reference CSV file. If not provided, uses desired trajectory."
     )
     fit_parser.add_argument(
         "--search", required=True, type=Path, help="Search space YAML file."
@@ -163,10 +163,12 @@ def handle_run(args: argparse.Namespace) -> int:
 def handle_fit(args: argparse.Namespace) -> int:
     from actdiag.fit import run_fit
 
+    reference_path = args.reference.resolve() if args.reference is not None else None
+
     return run_fit(
         system_path=args.system.resolve(),
         scenario_path=args.scenario.resolve(),
-        reference_path=args.reference.resolve(),
+        reference_path=reference_path,
         search_path=args.search.resolve(),
         output_dir=args.output_dir.resolve(),
     )

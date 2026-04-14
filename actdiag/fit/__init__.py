@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from actdiag.config import load_run_config, StepTestProfile
 from actdiag.fit.config import load_search_config
 from actdiag.fit.evaluator import (
@@ -17,7 +19,7 @@ from actdiag.signals import build_signal_series
 def run_fit(
     system_path: Path,
     scenario_path: Path,
-    reference_path: Path,
+    reference_path: Path | None,
     search_path: Path,
     output_dir: Path,
 ) -> int:
@@ -25,14 +27,25 @@ def run_fit(
     run_config = load_run_config(system_path, scenario_path)
     fit_config = load_search_config(search_path)
     
-    # 2. Load and prepare reference
-    reference_raw = load_reference(reference_path)
-    
     # Generate signals to get the simulation time grid and desired trajectory
     signals = build_signal_series(run_config.test, run_config.simulation)
     
-    reference_interpolated = interpolate_reference(reference_raw, signals.time)
-    # Add q_des and other desired signals to reference_interpolated for metric calculation
+    # 2. Load and prepare reference
+    if reference_path is not None:
+        print(f"Loading reference from {reference_path}...")
+        reference_raw = load_reference(reference_path)
+        reference_interpolated = interpolate_reference(reference_raw, signals.time)
+    else:
+        print("No reference provided. Using desired trajectory from scenario as reference.")
+        # Create a reference from desired signals
+        reference_interpolated = pd.DataFrame({
+            "time": signals.time,
+            "q": signals.q_des,
+            "dq": signals.dq_des,
+            "tau_applied": signals.tau_des,
+        })
+    
+    # Ensure q_des and other signals are available for metrics/plotting
     reference_interpolated["q_des"] = signals.q_des
     reference_interpolated["dq_des"] = signals.dq_des
     reference_interpolated["tau_des"] = signals.tau_des
