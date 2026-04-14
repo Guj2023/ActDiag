@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+    
+    # Run command
     run_parser = subparsers.add_parser("run", help="Run a single actuator experiment.")
     run_parser.add_argument(
         "--system", required=True, type=Path, help="System YAML profile."
@@ -61,6 +63,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Video frame rate for exported MP4 files.",
     )
     run_parser.set_defaults(handler=handle_run)
+
+    # Fit command
+    fit_parser = subparsers.add_parser("fit", help="Fit system parameters to a reference trajectory.")
+    fit_parser.add_argument(
+        "--system", required=True, type=Path, help="System YAML profile."
+    )
+    fit_parser.add_argument(
+        "--scenario", required=True, type=Path, help="Scenario YAML profile."
+    )
+    fit_parser.add_argument(
+        "--reference", required=True, type=Path, help="Reference CSV file."
+    )
+    fit_parser.add_argument(
+        "--search", required=True, type=Path, help="Search space YAML file."
+    )
+    fit_parser.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help="Output directory for fit results.",
+    )
+    fit_parser.set_defaults(handler=handle_fit)
+    
     return parser
 
 
@@ -133,6 +158,18 @@ def handle_run(args: argparse.Namespace) -> int:
     if step_metrics_path is not None:
         print(f"Step metrics: {step_metrics_path}")
     return 0
+
+
+def handle_fit(args: argparse.Namespace) -> int:
+    from actdiag.fit import run_fit
+
+    return run_fit(
+        system_path=args.system.resolve(),
+        scenario_path=args.scenario.resolve(),
+        reference_path=args.reference.resolve(),
+        search_path=args.search.resolve(),
+        output_dir=args.output_dir.resolve(),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
