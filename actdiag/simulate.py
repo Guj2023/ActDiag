@@ -121,7 +121,7 @@ def _simulate_signal_series(
 ) -> SimulationArtifacts:
     model = build_single_joint_model(run_config.scene, run_config.simulation.dt)
     data = initialize_scene_state(model, run_config.scene)
-    actuator = build_actuator(run_config.actuator)
+    actuator = build_actuator(run_config.actuator, run_config.simulation.dt)
     controller = build_controller(
         run_config.controller, model, run_config.simulation.dt
     )

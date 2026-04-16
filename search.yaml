@@ -2,4 +2,4 @@ fit:
   parameters:
     controller.kp: {min: 1.0, max: 400.0}
     controller.kd: {min: 0.0, max: 5.0}
-  samples: 100
+  samples: 2000

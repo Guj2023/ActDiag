@@ -41,14 +41,23 @@ actdiag fit \
 ### System (`system.yaml`)
 Defines your **Controller** (like PD or PID) and your **Actuator** (torque limits).
 
+#### Actuator Types
+
+- **`ideal_torque`**: Simple clipped torque.
+- **`limited_torque`**: Equivalent to `ideal_torque`.
+- **`dynamic_torque`**: Control-oriented model with bandwidth and rate limits.
+
 ```yaml
 controller:
   type: pd_position
   kp: 100.0
   kd: 2.0
 actuator:
-  type: ideal_torque
+  type: dynamic_torque
   torque_limit: 40.0
+  time_constant: 0.01
+  torque_rate_limit: 400.0   # Optional
+  deadzone: 0.2              # Optional
 ```
 
 ### Scenario (`scenario.yaml`)
@@ -116,3 +125,108 @@ Every time you run `actdiag`, it creates a folder with:
 - Python 3.10+
 - MuJoCo, NumPy, Pandas, Matplotlib, Pydantic, PyYAML
 
+# ActDiag Roadmap
+
+---
+
+## 🧭 Roadmap
+
+ActDiag is evolving from a simple simulation tool into a diagnostic framework for actuator behavior.  
+The development focuses on adding complexity only when it improves interpretability and fitting capability.
+
+---
+
+### v0.x — Current (Foundation)
+
+- Single-joint simulation with MuJoCo
+- Basic actuator models:
+  - `ideal_torque`
+  - `limited_torque`
+  - `dynamic_torque`
+- Standard test protocols:
+  - `step`
+  - `sine`
+  - `frequency_response`
+- Parameter fitting (`fit`) for controller gains (`kp`, `kd`)
+
+Goal:
+- Establish a reproducible testing and fitting pipeline
+
+---
+
+### v0.x++ — Asymmetric / Nonlinear Effects
+
+Extend actuator model to capture real-world asymmetries:
+
+- Different behavior for positive vs negative torque
+- Asymmetric rate limits
+- Asymmetric deadzones
+
+Example:
+
+```yaml
+torque_rate_limit_pos: ...
+torque_rate_limit_neg: ...
+deadzone_pos: ...
+deadzone_neg: ...
+```
+
+Goal:
+- Capture actuator bias and directional differences
+- Improve realism without introducing excessive complexity
+
+---
+
+### v0.x+++ — Linear Actuator Abstraction
+
+Introduce a force-based actuator:
+
+#### `dynamic_force`
+
+- Output: force instead of torque
+- Same non-ideal effects as `dynamic_torque`
+
+Goal:
+- Support linear systems (e.g., sliders, cylinders)
+- Move toward more general actuator abstraction
+
+---
+
+### Future — Hydraulic-like Actuator (Conceptual)
+
+Instead of full first-principles modeling, introduce a behavioral model inspired by hydraulic systems:
+
+Possible features:
+- Hysteresis
+- Strong asymmetry (extend vs retract)
+- Load-dependent response
+- Slow pressure buildup (modeled as lag)
+
+Goal:
+- Capture key hydraulic behaviors without full fluid simulation
+- Enable diagnosis of systems with strong nonlinearities
+
+---
+
+### Long-Term Direction
+
+- Improve identifiability in `fit`:
+  - Detect ambiguity
+  - Report model mismatch
+- Design better excitation signals (e.g., chirp, multi-sine)
+- Expand from “simulate and fit” to:
+  - diagnose why systems fail
+  - compare actuator/controller robustness across scenarios
+
+---
+
+## 🧠 Design Philosophy
+
+- Start simple, add complexity only when necessary
+- Prefer interpretable parameters over physically complete models
+- Focus on:
+  - reproducibility
+  - diagnosability
+  - fitting robustness
+
+If a simpler model can explain the behavior, prefer it over a more complex one.

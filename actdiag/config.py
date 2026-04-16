@@ -30,7 +30,17 @@ class LimitedTorqueActuatorProfile(StrictModel):
     torque_limit: PositiveFloat
 
 
-ActuatorProfile = IdealActuatorProfile | LimitedTorqueActuatorProfile
+class DynamicTorqueActuatorProfile(StrictModel):
+    type: Literal["dynamic_torque"]
+    torque_limit: PositiveFloat
+    time_constant: PositiveFloat
+    torque_rate_limit: PositiveFloat | None = None
+    deadzone: NonNegativeFloat | None = None
+
+
+ActuatorProfile = (
+    IdealActuatorProfile | LimitedTorqueActuatorProfile | DynamicTorqueActuatorProfile
+)
 
 
 class PDControllerProfile(StrictModel):
@@ -292,11 +302,16 @@ def _parse_actuator_profile(data: dict[str, Any]) -> ActuatorProfile:
         "ideal_torque": "ideal_actuator",
         "ideal_actuator": "ideal_actuator",
         "limited_torque": "limited_torque",
+        "dynamic_torque": "dynamic_torque",
     }.get(actuator_type)
     if normalized_type == "ideal_actuator":
         return IdealActuatorProfile.model_validate({**data, "type": normalized_type})
     if normalized_type == "limited_torque":
         return LimitedTorqueActuatorProfile.model_validate(
+            {**data, "type": normalized_type}
+        )
+    if normalized_type == "dynamic_torque":
+        return DynamicTorqueActuatorProfile.model_validate(
             {**data, "type": normalized_type}
         )
     raise ValueError("unsupported actuator type")
