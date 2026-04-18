@@ -7,6 +7,7 @@ It uses **MuJoCo** to simulate how your actuator behaves and helps you find the 
 
 1.  **Run Simulations (`run`):** Test your actuator with a specific controller and see how it follows a target (step, sine, or frequency sweep).
 2.  **Fit Parameters (`fit`):** Automatically find the best controller gains (`kp`, `kd`) to match a real-world reference trajectory.
+3.  **Sweep Parameters (`sweep`):** Systematically scan 1D or 2D controller and actuator settings and compare tracking and stability metrics.
 
 ---
 
@@ -32,6 +33,16 @@ actdiag fit \
   --reference reference.csv \
   --search search.yaml \
   --output-dir my_fit_results
+```
+
+### 4. Run a parameter sweep
+Explore controller sensitivity or actuator/controller trade-offs:
+```bash
+actdiag sweep \
+  --system examples/system_dynamic_torque.yaml \
+  --scenario examples/scenario_chirp.yaml \
+  --sweep examples/sweep_kp_tc.yaml \
+  --output-dir runs/sweep_kp_tc
 ```
 
 ---
@@ -87,6 +98,23 @@ fit:
   samples: 500
 ```
 
+### Sweep (`sweep.yaml`)
+Defines a full Cartesian grid of parameter values and which summary metrics to report.
+
+```yaml
+sweep:
+  parameters:
+    controller.kp:
+      values: [20, 40, 60, 80, 100]
+    actuator.time_constant:
+      values: [0.002, 0.005, 0.01, 0.02]
+
+  metrics:
+    - tracking_rmse
+    - jitter_metric
+    - stable
+```
+
 ### Reference Data (`reference.csv`)
 For the `fit` command, you can provide a CSV file with your recorded data. **This argument is optional.**
 
@@ -111,6 +139,17 @@ Every time you run `actdiag`, it creates a folder with:
 - **`summary/`**: Calculated metrics like rise time, overshoot, and settling time.
 - **`video/`**: An MP4 of the simulation (if `--save-video` is used).
 
+Every `sweep` creates:
+- **`summary.csv`**: One row per parameter combination.
+- **`plots/`**: `heatmap_<metric>.png` for all sweeps, plus `line_<metric>.png` for 1D sweeps.
+- **`cases/<parameter-slug>/`**: Full per-case run artifacts, named from the swept parameters and values.
+
+Supported sweep metrics:
+- **`tracking_rmse`**: RMSE of position tracking error.
+- **`max_abs_error`**: Maximum absolute position tracking error.
+- **`stable`**: Whether the simulated response remained bounded.
+- **`jitter_metric`**: High-frequency component of the tracking error.
+
 ---
 
 ## 🧪 Supported Tests
@@ -118,6 +157,21 @@ Every time you run `actdiag`, it creates a folder with:
 - **Step:** Jump to a target position.
 - **Sine:** Follow a smooth wave.
 - **Frequency Response:** Sweep through many frequencies to see the bandwidth (Bode plots).
+
+## 🔁 Parameter Sweeps
+
+Use sweeps when you want to:
+- understand controller sensitivity
+- identify stable regions
+- inspect trade-offs such as `kp` versus actuator bandwidth
+- debug sim-to-real mismatch
+
+Notes:
+- Only 1D and 2D sweeps are supported.
+- Sweep axes must target `controller.*` or `actuator.*` parameters.
+- All parameter combinations are evaluated.
+- Re-running a sweep replaces the existing output directory.
+- Failed cases are recorded as unstable and do not stop the sweep.
 
 ---
 

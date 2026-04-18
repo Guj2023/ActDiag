@@ -85,6 +85,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output directory for fit results.",
     )
     fit_parser.set_defaults(handler=handle_fit)
+
+    sweep_parser = subparsers.add_parser(
+        "sweep", help="Run a 1D or 2D parameter sweep."
+    )
+    sweep_parser.add_argument(
+        "--system", required=True, type=Path, help="System YAML profile."
+    )
+    sweep_parser.add_argument(
+        "--scenario", required=True, type=Path, help="Scenario YAML profile."
+    )
+    sweep_parser.add_argument(
+        "--sweep", required=True, type=Path, help="Sweep YAML profile."
+    )
+    sweep_parser.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help="Output directory for sweep results.",
+    )
+    sweep_parser.set_defaults(handler=handle_sweep)
     
     return parser
 
@@ -170,6 +190,17 @@ def handle_fit(args: argparse.Namespace) -> int:
         scenario_path=args.scenario.resolve(),
         reference_path=reference_path,
         search_path=args.search.resolve(),
+        output_dir=args.output_dir.resolve(),
+    )
+
+
+def handle_sweep(args: argparse.Namespace) -> int:
+    from actdiag.sweep import run_sweep
+
+    return run_sweep(
+        system_path=args.system.resolve(),
+        scenario_path=args.scenario.resolve(),
+        sweep_path=args.sweep.resolve(),
         output_dir=args.output_dir.resolve(),
     )
 

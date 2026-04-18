@@ -1,0 +1,9 @@
+sweep:
+  parameters:
+    controller.kp:
+      values: [20, 40, 60, 80, 100]
+
+  metrics:
+    - tracking_rmse
+    - max_abs_error
+    - stable

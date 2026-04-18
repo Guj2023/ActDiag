@@ -1,0 +1,11 @@
+sweep:
+  parameters:
+    controller.kp:
+      values: [0.5, 1.0, 2.0, 4.0, 8.0, 10.0]
+    actuator.time_constant:
+      values: [0.001, 0.005, 0.01, 0.02, 0.04]
+
+  metrics:
+    - tracking_rmse
+    - jitter_metric
+    - stable

@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from actdiag.config import PlotConfig
@@ -79,6 +80,59 @@ def save_frequency_response_plots(
         ylabel="Phase [deg]",
         title="Phase vs Frequency",
     )
+
+
+def save_sweep_plots(
+    summary: pd.DataFrame,
+    plots_dir: Path,
+    parameter_names: list[str],
+    metric_names: list[str],
+) -> None:
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    for metric_name in metric_names:
+        if len(parameter_names) == 1:
+            parameter_name = parameter_names[0]
+            ordered = summary.sort_values(parameter_name)
+            _save_sweep_line_plot(
+                plots_dir / f"line_{metric_name}.png",
+                ordered[parameter_name],
+                _metric_values_for_plot(ordered[metric_name]),
+                xlabel=parameter_name,
+                ylabel=metric_name,
+                title=f"{metric_name} vs {parameter_name}",
+            )
+            _save_sweep_1d_heatmap_plot(
+                plots_dir / f"heatmap_{metric_name}.png",
+                ordered[parameter_name],
+                _metric_values_for_plot(ordered[metric_name]),
+                xlabel=parameter_name,
+                title=f"{metric_name} Sweep",
+                metric_name=metric_name,
+            )
+            continue
+
+        x_name, y_name = parameter_names
+        working = summary[[x_name, y_name, metric_name]].copy()
+        working[metric_name] = _metric_values_for_plot(working[metric_name])
+        pivot = (
+            working.pivot_table(
+                index=y_name,
+                columns=x_name,
+                values=metric_name,
+                aggfunc="first",
+            )
+            .sort_index()
+            .sort_index(axis=1)
+        )
+        _save_sweep_heatmap_plot(
+            plots_dir / f"heatmap_{metric_name}.png",
+            pivot,
+            xlabel=x_name,
+            ylabel=y_name,
+            title=f"{metric_name} Sweep",
+            metric_name=metric_name,
+        )
 
 
 def _save_line_plot(
@@ -168,7 +222,103 @@ def _save_frequency_plot(
     plt.close(figure)
 
 
+def _save_sweep_line_plot(
+    path: Path,
+    x_values: pd.Series,
+    y_values: pd.Series,
+    *,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+) -> None:
+    figure, axis = plt.subplots(figsize=(7, 4.5))
+    axis.plot(x_values, y_values, marker="o", linewidth=2)
+    axis.set_xlabel(xlabel)
+    axis.set_ylabel(ylabel)
+    axis.set_title(title)
+    axis.grid(True, alpha=0.3)
+    if ylabel == "stable":
+        axis.set_ylim(-0.05, 1.05)
+        axis.set_yticks([0.0, 1.0], labels=["False", "True"])
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
+def _save_sweep_1d_heatmap_plot(
+    path: Path,
+    x_values: pd.Series,
+    values: pd.Series,
+    *,
+    xlabel: str,
+    title: str,
+    metric_name: str,
+) -> None:
+    matrix = values.to_numpy(dtype=float)[None, :]
+    figure, axis = plt.subplots(figsize=(max(6.0, 0.9 * len(x_values)), 2.6))
+    image = axis.imshow(
+        matrix,
+        aspect="auto",
+        origin="lower",
+        cmap="viridis",
+        vmin=0.0 if metric_name == "stable" else None,
+        vmax=1.0 if metric_name == "stable" else None,
+    )
+    axis.set_xlabel(xlabel)
+    axis.set_title(title)
+    axis.set_yticks([])
+    axis.set_xticks(range(len(x_values)), [f"{value:g}" for value in x_values])
+    plt.setp(axis.get_xticklabels(), rotation=30, ha="right")
+    colorbar = figure.colorbar(image, ax=axis)
+    colorbar.set_label(metric_name)
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
+def _save_sweep_heatmap_plot(
+    path: Path,
+    pivot: pd.DataFrame,
+    *,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    metric_name: str,
+) -> None:
+    matrix = pivot.to_numpy(dtype=float)
+    figure, axis = plt.subplots(
+        figsize=(max(6.5, 0.9 * len(pivot.columns)), max(4.5, 0.7 * len(pivot.index)))
+    )
+    image = axis.imshow(
+        np.ma.masked_invalid(matrix),
+        aspect="auto",
+        origin="lower",
+        cmap="viridis",
+        vmin=0.0 if metric_name == "stable" else None,
+        vmax=1.0 if metric_name == "stable" else None,
+    )
+    axis.set_xlabel(xlabel)
+    axis.set_ylabel(ylabel)
+    axis.set_title(title)
+    axis.set_xticks(range(len(pivot.columns)), [f"{value:g}" for value in pivot.columns])
+    axis.set_yticks(range(len(pivot.index)), [f"{value:g}" for value in pivot.index])
+    plt.setp(axis.get_xticklabels(), rotation=30, ha="right")
+    colorbar = figure.colorbar(image, ax=axis)
+    colorbar.set_label(metric_name)
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
 def _defined_series(
     *series: tuple[str, pd.Series]
 ) -> tuple[tuple[str, pd.Series], ...]:
     return tuple((label, values) for label, values in series if values.notna().any())
+
+
+def _metric_values_for_plot(values: pd.Series) -> pd.Series:
+    if values.dtype == bool:
+        return values.astype(float)
+    if values.dropna().isin([True, False]).all():
+        return values.astype(float)
+    return pd.to_numeric(values, errors="coerce")

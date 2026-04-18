@@ -62,6 +62,19 @@ def save_input_configs(
     shutil.copy2(scenario_path, run_paths.config_dir / "scenario.yaml")
 
 
+def save_input_config_data(
+    run_paths: RunPaths,
+    system_data: dict[str, Any],
+    scenario_data: dict[str, Any],
+) -> None:
+    with (run_paths.config_dir / "system.yaml").open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(system_data, handle, sort_keys=False)
+    with (run_paths.config_dir / "scenario.yaml").open(
+        "w", encoding="utf-8"
+    ) as handle:
+        yaml.safe_dump(scenario_data, handle, sort_keys=False)
+
+
 def save_resolved_config(run_paths: RunPaths, resolved_config: dict[str, Any]) -> None:
     output_path = run_paths.config_dir / "resolved.yaml"
     with output_path.open("w", encoding="utf-8") as handle:

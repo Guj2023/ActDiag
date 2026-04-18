@@ -1,11 +1,11 @@
 controller:
   type: pd_position
-  kp: 500.0
+  kp: 2.0
   kd: 5.0
 
 actuator:
   type: dynamic_torque
   torque_limit: 40.0
   time_constant: 0.01
-  torque_rate_limit: 200.0
-  deadzone: 0.2
+  torque_rate_limit: 10.0
+  deadzone: 0.5

@@ -1,7 +1,7 @@
 controller:
   type: pd_position
-  kp: 100.0
-  kd: 2.0
+  kp: 4.74
+  kd: 1.2
 
 actuator:
   type: limited_torque

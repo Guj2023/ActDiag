@@ -227,6 +227,46 @@ PositionTestProfile = (
 )
 TorqueTestProfile = TorqueStepTestProfile | TorqueSineTestProfile
 TestProfile = PositionTestProfile | TorqueTestProfile
+SweepMetricName = Literal[
+    "tracking_rmse",
+    "max_abs_error",
+    "stable",
+    "jitter_metric",
+]
+
+
+class SweepParameterValues(StrictModel):
+    values: list[float] = Field(..., min_length=1)
+
+    @field_validator("values")
+    @classmethod
+    def validate_finite_values(cls, values: list[float]) -> list[float]:
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("values must contain only finite numbers")
+        return values
+
+
+class SweepConfig(StrictModel):
+    parameters: dict[str, SweepParameterValues]
+    metrics: list[SweepMetricName] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_structure(self) -> "SweepConfig":
+        parameter_count = len(self.parameters)
+        if parameter_count not in (1, 2):
+            raise ValueError("only 1D and 2D sweeps are supported")
+
+        for path in self.parameters:
+            root = path.split(".", 1)[0]
+            if root not in {"controller", "actuator"}:
+                raise ValueError(
+                    "sweep parameters must target controller.* or actuator.* fields"
+                )
+
+        if len(set(self.metrics)) != len(self.metrics):
+            raise ValueError("metrics must not contain duplicates")
+
+        return self
 
 
 def derive_frequency_response_duration(profile: FrequencyResponseTestProfile) -> float:
@@ -407,10 +447,9 @@ def _parse_user_test_profile(test_data: dict[str, Any]) -> TestProfile:
     return _parse_test_profile(normalized_data)
 
 
-def load_run_config(system_path: Path, scenario_path: Path) -> RunConfig:
-    system_data = _load_yaml(system_path)
-    scenario_data = _load_yaml(scenario_path)
-
+def load_run_config_from_data(
+    system_data: dict[str, Any], scenario_data: dict[str, Any]
+) -> RunConfig:
     test_data, simulation_data = _normalize_test_and_simulation_data(
         scenario_data.get("test", {}) or {},
         scenario_data.get("simulation", {}) or {},
@@ -440,6 +479,24 @@ def load_run_config(system_path: Path, scenario_path: Path) -> RunConfig:
         plots=plots,
         output=output,
     )
+
+
+def load_yaml_mapping(path: Path) -> dict[str, Any]:
+    return _load_yaml(path)
+
+
+def load_run_config(system_path: Path, scenario_path: Path) -> RunConfig:
+    return load_run_config_from_data(
+        load_yaml_mapping(system_path),
+        load_yaml_mapping(scenario_path),
+    )
+
+
+def load_sweep_config(path: Path) -> SweepConfig:
+    data = load_yaml_mapping(path)
+    if "sweep" not in data:
+        raise ValueError(f"Missing 'sweep' section in {path}")
+    return SweepConfig.model_validate(data["sweep"])
 
 
 def _controller_to_user_dict(profile: ControllerProfile) -> dict[str, Any]:
