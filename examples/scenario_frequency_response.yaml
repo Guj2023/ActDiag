@@ -16,7 +16,7 @@ test:
 
 simulation:
   # duration is derived automatically from frequencies and cycles_per_frequency
-  dt: 0.001
+  dt: 0.002
 
 logging:
   save_csv: true

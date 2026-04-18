@@ -1,5 +1,5 @@
 fit:
   parameters:
-    controller.kp: {min: 1.0, max: 10.0}
-    controller.kd: {min: 0.0, max: 5.0}
+    controller.kp: {min: 1.0, max: 100.0}
+    controller.kd: {min: 0.0, max: 10.0}
   samples: 200
