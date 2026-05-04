@@ -2,13 +2,13 @@ scene:
   type: single_joint
   inertia: 0.05
   damping: 0.1
-  gravity: false
-  q0: 0.0
+  gravity: true
+  q0: 0.77
   dq0: 0.0
 
 test:
   type: step
-  target: -0.9
+  target: 1.1
   start_time: 0.2
 
 simulation:
