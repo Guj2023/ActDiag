@@ -104,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output directory for sweep results. Defaults to sweeps/<timestamp>.",
     )
+    sweep_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel worker processes (default: 1). Use 0 for all CPUs.",
+    )
     sweep_parser.set_defaults(handler=handle_sweep)
     
     return parser
@@ -205,6 +211,7 @@ def handle_sweep(args: argparse.Namespace) -> int:
         scenario_path=args.scenario.resolve(),
         sweep_path=args.sweep.resolve(),
         output_dir=output_dir,
+        workers=args.workers,
     )
 
 

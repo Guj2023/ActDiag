@@ -229,14 +229,67 @@ SweepMetricName = Literal[
 
 
 class SweepParameterValues(StrictModel):
-    values: list[float] = Field(..., min_length=1)
+    # --- explicit list ---
+    values: list[float] | None = None
+    # --- range spec (resolves to values at validation time) ---
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None   # arange-style: [min, min+step, …, max]
+    num: int | None = None      # linspace/logspace: N evenly-spaced points
+    scale: Literal["linear", "log"] = "linear"
 
-    @field_validator("values")
-    @classmethod
-    def validate_finite_values(cls, values: list[float]) -> list[float]:
-        if not all(math.isfinite(value) for value in values):
-            raise ValueError("values must contain only finite numbers")
-        return values
+    @model_validator(mode="after")
+    def resolve_values(self) -> "SweepParameterValues":
+        if self.values is not None:
+            if not self.values:
+                raise ValueError("values must not be empty")
+            if not all(math.isfinite(v) for v in self.values):
+                raise ValueError("values must contain only finite numbers")
+            return self
+
+        if self.min is None or self.max is None:
+            raise ValueError(
+                "specify 'values' or a range with 'min'+'max' and 'step'/'num'"
+            )
+        if not (math.isfinite(self.min) and math.isfinite(self.max)):
+            raise ValueError("'min' and 'max' must be finite")
+        if self.min >= self.max:
+            raise ValueError("'min' must be less than 'max'")
+        if self.step is not None and self.num is not None:
+            raise ValueError("specify either 'step' or 'num', not both")
+        if self.step is None and self.num is None:
+            raise ValueError("specify 'step' or 'num' when using a range")
+
+        import numpy as _np
+
+        if self.step is not None:
+            if self.step <= 0:
+                raise ValueError("'step' must be positive")
+            resolved = [
+                float(v)
+                for v in _np.arange(self.min, self.max + self.step * 0.5, self.step)
+            ]
+        else:
+            if self.num < 2:
+                raise ValueError("'num' must be at least 2")
+            if self.scale == "log":
+                if self.min <= 0:
+                    raise ValueError("'min' must be positive for log scale")
+                resolved = [
+                    float(v)
+                    for v in _np.logspace(
+                        _np.log10(self.min), _np.log10(self.max), self.num
+                    )
+                ]
+            else:
+                resolved = [
+                    float(v) for v in _np.linspace(self.min, self.max, self.num)
+                ]
+
+        if not resolved:
+            raise ValueError("range spec produced no values")
+        self.values = resolved
+        return self
 
 
 class SweepConfig(StrictModel):

@@ -1,9 +1,14 @@
 sweep:
   parameters:
     controller.kp:
-      values: [0.5, 1.0, 2.0, 4.0, 8.0, 10.0]
+      min: 0.5
+      max: 10.0
+      num: 8
     actuator.time_constant:
-      values: [0.001, 0.005, 0.01, 0.02, 0.04]
+      min: 0.001
+      max: 0.04
+      num: 5
+      scale: log
 
   metrics:
     - tracking_rmse

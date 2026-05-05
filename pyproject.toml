@@ -17,6 +17,7 @@ dependencies = [
   "pandas>=2.2",
   "pydantic>=2.6",
   "PyYAML>=6.0",
+  "rich>=13.0",
 ]
 
 [project.scripts]

@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 import math
+import os
 from pathlib import Path
 import shutil
+from typing import Any, Iterator
 
 import numpy as np
 import pandas as pd
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from actdiag.config import (
     FrequencyResponseTestProfile,
@@ -38,11 +49,56 @@ from actdiag.plotting import (
 from actdiag.simulate import run_frequency_response_simulation, run_simulation
 
 
+# ---------------------------------------------------------------------------
+# Top-level worker — must be module-level so ProcessPoolExecutor can pickle it
+# ---------------------------------------------------------------------------
+
+def _sweep_case_worker(args: dict[str, Any]) -> dict[str, Any]:
+    """Execute one sweep case and return a result dict."""
+    case_id: str = args["case_id"]
+    case_parameters: dict[str, float] = args["parameters"]
+    case_system_data: dict = args["system_data"]
+    case_scenario_data: dict = args["scenario_data"]
+    case_dir = Path(args["case_dir"])
+    output_dir = Path(args["output_dir"])
+    metric_names: list[str] = args["metric_names"]
+
+    metric_values = _default_metric_values(metric_names)
+    error_message: str | None = None
+
+    try:
+        run_config = load_run_config_from_data(case_system_data, case_scenario_data)
+        run_paths = create_run_paths(Path.cwd(), case_dir)
+        save_input_config_data(run_paths, case_system_data, case_scenario_data)
+        save_resolved_config(run_paths, run_config_to_dict(run_config))
+        timeseries = _run_case(run_config, run_paths)
+        metric_values = _compute_metrics(
+            timeseries, metric_names, dt=run_config.simulation.dt
+        )
+    except Exception as exc:
+        error_message = f"{type(exc).__name__}: {exc}"
+        case_dir.mkdir(parents=True, exist_ok=True)
+        (case_dir / "error.txt").write_text(error_message + "\n", encoding="utf-8")
+
+    return {
+        "case_id": case_id,
+        "parameters": case_parameters,
+        "metrics": metric_values,
+        "error": error_message,
+        "run_dir": str(case_dir.relative_to(output_dir)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
 def run_sweep(
     system_path: Path,
     scenario_path: Path,
     sweep_path: Path,
     output_dir: Path | None = None,
+    workers: int = 1,
 ) -> int:
     output_dir = make_output_dir(Path.cwd(), "sweeps", output_dir)
 
@@ -50,7 +106,6 @@ def run_sweep(
     scenario_data = load_yaml_mapping(scenario_path)
     sweep_config = load_sweep_config(sweep_path)
 
-    # Validate the base run config before enumerating cases.
     load_run_config_from_data(copy.deepcopy(system_data), copy.deepcopy(scenario_data))
 
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -68,52 +123,72 @@ def run_sweep(
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     parameter_values = [sweep_config.parameters[name].values for name in parameter_names]
-    total_cases = math.prod(len(values) for values in parameter_values)
-    print(f"Running sweep with {total_cases} cases...")
+    total_cases = math.prod(len(v) for v in parameter_values)
 
-    rows: list[dict[str, object]] = []
+    # Pre-build one args dict per case
+    all_case_args: list[dict[str, Any]] = []
     for combination in product(*parameter_values):
-        case_system_data = copy.deepcopy(system_data)
-        case_scenario_data = copy.deepcopy(scenario_data)
         case_parameters = {
             name: float(value) for name, value in zip(parameter_names, combination)
         }
-        case_id = _case_slug(case_parameters)
-        case_dir = cases_dir / case_id
-
+        case_system_data = copy.deepcopy(system_data)
         for path, value in case_parameters.items():
             _apply_parameter_override(case_system_data, path, value)
 
-        metric_values = _default_metric_values(metric_names)
-        error_message: str | None = None
+        case_id = _case_slug(case_parameters)
+        all_case_args.append({
+            "case_id": case_id,
+            "parameters": case_parameters,
+            "system_data": case_system_data,
+            "scenario_data": scenario_data,
+            "case_dir": str(cases_dir / case_id),
+            "output_dir": str(output_dir),
+            "metric_names": metric_names,
+        })
 
-        try:
-            run_config = load_run_config_from_data(case_system_data, case_scenario_data)
-            run_paths = create_run_paths(Path.cwd(), case_dir)
-            save_input_config_data(run_paths, case_system_data, case_scenario_data)
-            save_resolved_config(run_paths, run_config_to_dict(run_config))
+    # --- rich progress bar setup ---
+    effective_workers = workers if workers > 0 else os.cpu_count() or 1
+    worker_label = f" · {effective_workers} workers" if effective_workers > 1 else ""
+    base_desc = f"Sweeping {total_cases} cases{worker_label}"
 
-            timeseries = _run_case(run_config, run_paths)
-            metric_values = _compute_metrics(
-                timeseries, metric_names, dt=run_config.simulation.dt
-            )
-        except Exception as exc:
-            error_message = str(exc)
-            case_dir.mkdir(parents=True, exist_ok=True)
-            with (case_dir / "error.txt").open("w", encoding="utf-8") as handle:
-                handle.write(f"{type(exc).__name__}: {exc}\n")
+    rows: list[dict[str, object]] = []
+    best_val: float | None = None
+    best_params: dict[str, float] | None = None
+    primary_metric = metric_names[0]
 
-        row: dict[str, object] = {"case_id": case_id}
-        row.update(case_parameters)
-        row.update(metric_values)
-        row["run_dir"] = str(case_dir.relative_to(output_dir))
-        if error_message is not None:
-            row["error"] = error_message
-        rows.append(row)
+    with Progress(
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        refresh_per_second=4,
+    ) as progress:
+        task_id = progress.add_task(base_desc, total=total_cases)
 
-        if len(rows) % 10 == 0 or len(rows) == total_cases:
-            index = len(rows)
-            print(f"  Completed {index}/{total_cases} cases")
+        for result in _iter_results(all_case_args, effective_workers):
+            row: dict[str, object] = {"case_id": result["case_id"]}
+            row.update(result["parameters"])
+            row.update(result["metrics"])
+            row["run_dir"] = result["run_dir"]
+            if result["error"] is not None:
+                row["error"] = result["error"]
+            rows.append(row)
+
+            # Track running best for display (lower = better for float metrics)
+            metric_val = result["metrics"].get(primary_metric)
+            if isinstance(metric_val, float) and math.isfinite(metric_val):
+                if best_val is None or metric_val < best_val:
+                    best_val = metric_val
+                    best_params = result["parameters"]
+
+            desc = base_desc
+            if best_val is not None and best_params is not None:
+                params_str = "  ".join(
+                    f"{k.split('.')[-1]}={v:.3g}" for k, v in best_params.items()
+                )
+                desc = f"{base_desc}  │  best {primary_metric}={best_val:.4g} ({params_str})"
+            progress.update(task_id, advance=1, description=desc)
 
     summary_columns = ["case_id", *parameter_names, *metric_names, "run_dir"]
     if any("error" in row for row in rows):
@@ -128,6 +203,27 @@ def run_sweep(
     print(f"Summary: {summary_path}")
     return 0
 
+
+# ---------------------------------------------------------------------------
+# Sequential / parallel dispatch
+# ---------------------------------------------------------------------------
+
+def _iter_results(
+    all_args: list[dict[str, Any]], workers: int
+) -> Iterator[dict[str, Any]]:
+    if workers <= 1:
+        for args in all_args:
+            yield _sweep_case_worker(args)
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_sweep_case_worker, args) for args in all_args]
+            for future in as_completed(futures):
+                yield future.result()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _save_sweep_inputs(
     output_dir: Path, system_path: Path, scenario_path: Path, sweep_path: Path
@@ -148,10 +244,8 @@ def _apply_parameter_override(
         if not isinstance(target, dict) or part not in target:
             raise KeyError(f"unknown parameter path '{path}'")
         target = target[part]
-
     if not isinstance(target, dict):
         raise KeyError(f"unknown parameter path '{path}'")
-
     leaf = parts[-1]
     if leaf not in target:
         raise KeyError(f"unknown parameter path '{path}'")
@@ -159,10 +253,10 @@ def _apply_parameter_override(
 
 
 def _case_slug(case_parameters: dict[str, float]) -> str:
-    parts = []
-    for name, value in case_parameters.items():
-        parts.append(f"{_path_slug(name)}_{_value_slug(value)}")
-    return "__".join(parts)
+    return "__".join(
+        f"{_path_slug(name)}_{_value_slug(value)}"
+        for name, value in case_parameters.items()
+    )
 
 
 def _path_slug(path: str) -> str:
@@ -170,9 +264,9 @@ def _path_slug(path: str) -> str:
 
 
 def _value_slug(value: float) -> str:
-    text = f"{value:g}"
     return (
-        text.replace("-", "neg_")
+        f"{value:g}"
+        .replace("-", "neg_")
         .replace(".", "_")
         .replace("+", "")
     )
@@ -224,17 +318,15 @@ def _compute_metrics(
     results: dict[str, float | bool] = {}
     for metric in metric_names:
         if metric == "tracking_rmse":
-            if finite_position_error.size == 0:
-                results[metric] = math.nan
-            else:
-                results[metric] = float(
-                    np.sqrt(np.mean(np.square(finite_position_error)))
-                )
+            results[metric] = (
+                math.nan if finite_position_error.size == 0
+                else float(np.sqrt(np.mean(np.square(finite_position_error))))
+            )
         elif metric == "max_abs_error":
-            if finite_position_error.size == 0:
-                results[metric] = math.nan
-            else:
-                results[metric] = float(np.max(np.abs(finite_position_error)))
+            results[metric] = (
+                math.nan if finite_position_error.size == 0
+                else float(np.max(np.abs(finite_position_error)))
+            )
         elif metric == "stable":
             results[metric] = stable
         elif metric == "jitter_metric":
@@ -246,10 +338,7 @@ def _compute_metrics(
 def _default_metric_values(
     metric_names: list[SweepMetricName],
 ) -> dict[str, float | bool]:
-    values: dict[str, float | bool] = {}
-    for metric in metric_names:
-        values[metric] = False if metric == "stable" else math.nan
-    return values
+    return {m: (False if m == "stable" else math.nan) for m in metric_names}
 
 
 def _is_stable(timeseries: pd.DataFrame) -> bool:
@@ -257,7 +346,7 @@ def _is_stable(timeseries: pd.DataFrame) -> bool:
         return False
 
     required_columns = ["q", "dq", "q_des", "dq_des"]
-    if any(column not in timeseries for column in required_columns):
+    if any(col not in timeseries for col in required_columns):
         return False
 
     q_values = timeseries["q"].to_numpy(dtype=float)
@@ -275,13 +364,12 @@ def _is_stable(timeseries: pd.DataFrame) -> bool:
 
     q_scale = max(1.0, _finite_absmax(q_des_values))
     dq_scale = max(1.0, _finite_absmax(dq_des_values))
-    position_error_scale = _finite_absmax(q_values - q_des_values)
 
     if _finite_absmax(q_values) > max(10.0, 20.0 * q_scale):
         return False
     if _finite_absmax(dq_values) > max(50.0, 20.0 * dq_scale):
         return False
-    if position_error_scale > max(5.0, 10.0 * q_scale):
+    if _finite_absmax(q_values - q_des_values) > max(5.0, 10.0 * q_scale):
         return False
 
     return True
@@ -289,9 +377,7 @@ def _is_stable(timeseries: pd.DataFrame) -> bool:
 
 def _finite_absmax(values: np.ndarray) -> float:
     finite_values = values[np.isfinite(values)]
-    if finite_values.size == 0:
-        return 0.0
-    return float(np.max(np.abs(finite_values)))
+    return 0.0 if finite_values.size == 0 else float(np.max(np.abs(finite_values)))
 
 
 def _compute_jitter_metric(position_error: np.ndarray, dt: float) -> float:
@@ -314,5 +400,4 @@ def _compute_jitter_metric(position_error: np.ndarray, dt: float) -> float:
 
     kernel = np.ones(window, dtype=float) / float(window)
     smoothed = np.convolve(position_error, kernel, mode="same")
-    high_frequency_component = position_error - smoothed
-    return float(np.sqrt(np.mean(np.square(high_frequency_component))))
+    return float(np.sqrt(np.mean(np.square(position_error - smoothed))))
