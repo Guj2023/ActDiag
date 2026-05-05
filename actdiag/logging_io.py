@@ -22,6 +22,14 @@ class RunPaths:
     video_dir: Path
 
 
+def make_output_dir(project_root: Path, subdir: str, output_dir: Path | None) -> Path:
+    """Return output_dir if given, otherwise auto-generate <project_root>/<subdir>/<timestamp>."""
+    if output_dir is not None:
+        return output_dir
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    return project_root / subdir / timestamp
+
+
 def create_run_paths(project_root: Path, output_dir: Path | None = None) -> RunPaths:
     if output_dir is None:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")

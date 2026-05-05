@@ -17,15 +17,21 @@ def save_fit_results(
     best_result: EvaluationResult,
     plot_config: Any,
     reference_interpolated: pd.DataFrame,
+    best_system_data: dict[str, Any],
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. best_fit.yaml
+    # 1. best_system.yaml — drop-in system config with fitted parameters applied
+    best_system_path = output_dir / "best_system.yaml"
+    with best_system_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(best_system_data, f, sort_keys=False)
+
+    # 2. best_fit.yaml — raw parameter values for reference
     best_fit_path = output_dir / "best_fit.yaml"
     with best_fit_path.open("w", encoding="utf-8") as f:
         yaml.dump(best_result.parameters, f)
 
-    # 2. top_candidates.csv
+    # 3. top_candidates.csv
     # Sort results by cost
     sorted_results = sorted(results, key=lambda x: x.total_cost)
     top_data = []
@@ -36,7 +42,7 @@ def save_fit_results(
     top_candidates_path = output_dir / "top_candidates.csv"
     pd.DataFrame(top_data).to_csv(top_candidates_path, index=False)
 
-    # 3. objective_breakdown.json
+    # 4. objective_breakdown.json
     breakdown = {
         "total_cost": best_result.total_cost,
         "mse_q": best_result.mse_q,
@@ -48,16 +54,9 @@ def save_fit_results(
     with breakdown_path.open("w", encoding="utf-8") as f:
         json.dump(breakdown, f, indent=2)
 
-    # 4. plots
+    # 5. plots
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
-    
-    # We want to overlay simulation vs reference.
-    # save_plots expects a timeseries DataFrame.
-    # I'll create a combined dataframe for plotting or just use save_plots on sim and ref separately.
-    # The requirement is "Overlay: q_sim vs q_ref, dq_sim vs dq_ref".
-    # Existing save_plots might not support overlays easily without modification.
-    
     _save_fit_plots(best_result.timeseries, reference_interpolated, plots_dir)
 
 

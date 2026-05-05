@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import copy
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-from actdiag.config import load_run_config, StepTestProfile
+from actdiag.config import load_run_config, load_yaml_mapping, StepTestProfile
 from actdiag.fit.config import load_search_config
+from actdiag.logging_io import make_output_dir
 from actdiag.fit.evaluator import (
     evaluate_sample,
     interpolate_reference,
@@ -21,10 +24,13 @@ def run_fit(
     scenario_path: Path,
     reference_path: Path | None,
     search_path: Path,
-    output_dir: Path,
+    output_dir: Path | None = None,
 ) -> int:
+    output_dir = make_output_dir(Path.cwd(), "fits", output_dir)
+
     # 1. Load configs
     run_config = load_run_config(system_path, scenario_path)
+    system_data = load_yaml_mapping(system_path)
     fit_config = load_search_config(search_path)
     
     # Generate signals to get the simulation time grid and desired trajectory
@@ -84,17 +90,35 @@ def run_fit(
         print("Error: All simulations failed.")
         return 1
 
-    # 5. Save results
+    # 5. Build best-fit system config by patching the original system YAML
+    best_system_data = _apply_params_to_dict(system_data, best_result.parameters)
+
+    # 6. Save results
     save_fit_results(
         output_dir,
         results,
         best_result,
         run_config.plots,
         reference_interpolated,
+        best_system_data,
     )
-    
+
     print(f"Fit complete. Best cost: {best_result.total_cost:.6f}")
     print(f"Results saved to: {output_dir}")
     print(f"Best parameters: {best_result.parameters}")
-    
+
     return 0
+
+
+def _apply_params_to_dict(
+    system_data: dict[str, Any], parameters: dict[str, float]
+) -> dict[str, Any]:
+    """Return a deep copy of system_data with each parameter path applied."""
+    data = copy.deepcopy(system_data)
+    for path, value in parameters.items():
+        parts = path.split(".")
+        node: Any = data
+        for part in parts[:-1]:
+            node = node[part]
+        node[parts[-1]] = value
+    return data
