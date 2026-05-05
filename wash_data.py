@@ -24,12 +24,14 @@ for mat_file, csv_file in files:
     h_des = data['h_des'].flatten()
     h_act = data['h_act'].flatten()
     
-    # Calculate q from h_act using formula: h = 0.616 - 0.37 * cos(q)
-    # => cos(q) = (0.616 - h) / 0.37
-    # => q = arccos((0.616 - h) / 0.37)
+    # Kinematics: h = 0.616 - 0.37 * cos(q)  =>  q = arccos((0.616 - h) / 0.37)
     cos_q = (0.616 - h_act) / 0.37
     cos_q = np.clip(cos_q, -1.0, 1.0)
     q = np.arccos(cos_q)
+
+    cos_q_des = (0.616 - h_des) / 0.37
+    cos_q_des = np.clip(cos_q_des, -1.0, 1.0)
+    q_des = np.arccos(cos_q_des)
     
     # Skip transient garbage at the very start
     mask = np.ones_like(h_act, dtype=bool)
@@ -38,6 +40,7 @@ for mat_file, csv_file in files:
     
     time = time[mask]
     q = q[mask]
+    q_des = q_des[mask]
     h_des = h_des[mask]
     h_act = h_act[mask]
     
@@ -55,8 +58,9 @@ for mat_file, csv_file in files:
         'time': time,
         'q': q,
         'dq': dq,
+        'q_des': q_des,
         'h_des': h_des,
-        'h_act': h_act
+        'h_act': h_act,
     })
     
     out_path = os.path.join(out_dir, csv_file)

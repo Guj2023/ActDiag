@@ -1,0 +1,7 @@
+actuator.time_constant: 0.018272003122518726
+actuator.torque_limit: 480.3672220437649
+actuator.torque_rate_limit: 13721.98837484594
+controller.kd: 11.107957068605248
+controller.kp: 244.39365313028583
+scene.joint.damping: 2.200588194610905
+scene.joint.inertia: 1.173800186802682

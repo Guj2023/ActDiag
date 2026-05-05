@@ -1,0 +1,7 @@
+controller:
+  type: pd_position
+  kp: 253.7387
+  kd: 3.2569
+actuator:
+  type: ideal_torque
+  torque_limit: 38.6701

@@ -2,18 +2,18 @@ scene:
   type: single_joint
   inertia: 0.05
   damping: 0.1
-  gravity: true
-  q0: 0.77
+  gravity: false
+  q0: 0.7127   # measured steady-state angle at h_des=0.35 m
   dq0: 0.0
 
 test:
   type: step
-  target: 1.1
-  start_time: 0.2
+  target: 1.1055  # q_des = arccos((0.616-0.45)/0.37), the commanded angle for h_des=0.45 m
+  start_time: 0.0
 
 simulation:
-  duration: 2.0
-  dt: 0.002
+  duration: 2.5   # one full 2.5-s step cycle, matching real data window
+  dt: 0.002       # matches real data sample rate (500 Hz)
 
 logging:
   save_csv: true

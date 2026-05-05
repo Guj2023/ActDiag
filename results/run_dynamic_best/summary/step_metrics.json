@@ -1,0 +1,8 @@
+{
+  "steady_state_value": 1.1055365066036684,
+  "steady_state_error": -3.6506603668495785e-05,
+  "peak_value": 1.2499063080958746,
+  "percent_overshoot": null,
+  "rise_time": null,
+  "settling_time": null
+}

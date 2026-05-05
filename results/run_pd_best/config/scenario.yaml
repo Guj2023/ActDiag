@@ -1,0 +1,25 @@
+logging:
+  save_csv: true
+output:
+  save_video: false
+plots:
+  error: true
+  frequency_response: false
+  phase: true
+  position: true
+  torque: true
+  velocity: true
+scene:
+  damping: 5.752637
+  dq0: 0.0
+  gravity: false
+  inertia: 1.029926
+  q0: 0.7127
+  type: single_joint
+simulation:
+  dt: 0.002
+  duration: 2.5
+test:
+  start_time: 0.0
+  target: 1.1055
+  type: step

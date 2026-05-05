@@ -1,0 +1,14 @@
+fit:
+  parameters:
+    scene.joint.inertia:   {min: 0.01,  max: 2.0}
+    scene.joint.damping:   {min: 0.0,   max: 10.0}
+    controller.kp:         {min: 1.0,   max: 300.0}
+    controller.kd:         {min: 0.0,   max: 20.0}
+    actuator.torque_limit: {min: 10.0,  max: 500.0}
+  objective:
+    q_weight:      1.0
+    dq_weight:     0.2
+    tau_weight:    0.0
+    metric_weight: 0.5
+  samples: 2000
+  seed: 42
