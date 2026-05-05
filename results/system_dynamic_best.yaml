@@ -1,0 +1,12 @@
+# Best dynamic fit — obtained by freezing the PD+Ideal best fit and searching
+# only the two dynamic-specific parameters (time_constant, torque_rate_limit).
+# This guarantees dynamic >= ideal and isolates the actuator-dynamics contribution.
+controller:
+  type: pd_position
+  kp: 253.7387
+  kd: 3.2569
+actuator:
+  type: dynamic_torque
+  torque_limit: 38.6701
+  time_constant: 0.005584
+  torque_rate_limit: 36352.41

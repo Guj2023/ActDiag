@@ -19,6 +19,14 @@ def build_single_joint_model(
     ixx = max(joint.inertia, 1e-5)
     izz = max(joint.inertia, 1e-5)
 
+    # The real arm is a pendulum whose pivot is at the top; the link rotates about
+    # the Y-axis, so the tip traces the XZ plane. With hinge axis=Y and link along
+    # body-X, the tip world-z = body_z - 0.35*sin(q). To avoid floor contact for
+    # any q in [0, pi/2] we need body_z > link_length + capsule_radius.
+    link_length = 0.35
+    capsule_radius = 0.03
+    body_z = link_length + capsule_radius + 0.07  # 7 cm safety margin above floor
+
     xml = f"""
     <mujoco model="actdiag_single_joint">
       <compiler angle="radian" inertiafromgeom="false"/>
@@ -29,7 +37,7 @@ def build_single_joint_model(
       <worldbody>
         <light name="key" pos="0 0 1.6" dir="0 0 -1" directional="true"/>
         <geom name="floor" type="plane" size="2 2 0.1" rgba="0.95 0.95 0.95 1"/>
-        <body name="link" pos="0 0 0.2">
+        <body name="link" pos="0 0 {body_z:.4g}">
           <joint
             name="hinge"
             type="hinge"

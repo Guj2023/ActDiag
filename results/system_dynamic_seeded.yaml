@@ -1,0 +1,12 @@
+# Seeded from the PD+Ideal best fit: controller and torque_limit are frozen at
+# their ideal-best values. Only the two dynamic-specific parameters (time_constant
+# and torque_rate_limit) are searched.
+controller:
+  type: pd_position
+  kp: 253.7387
+  kd: 3.2569
+actuator:
+  type: dynamic_torque
+  torque_limit: 38.6701
+  time_constant: 0.001       # placeholder, overridden by search
+  torque_rate_limit: 1000.0  # placeholder, overridden by search

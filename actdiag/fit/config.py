@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class ParameterSearchSpace(BaseModel):
     min: float
     max: float
+    log: bool = False
 
 
 class ObjectiveWeights(BaseModel):

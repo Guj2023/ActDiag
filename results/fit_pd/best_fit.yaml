@@ -1,0 +1,5 @@
+actuator.torque_limit: 38.67009305661312
+controller.kd: 3.256944653638376
+controller.kp: 253.7387403518082
+scene.joint.damping: 5.75263686608859
+scene.joint.inertia: 1.0299264801188182

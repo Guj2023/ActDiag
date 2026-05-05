@@ -1,0 +1,34 @@
+system:
+  controller:
+    type: pd_position
+    kp: 253.7387
+    kd: 3.2569
+  actuator:
+    type: ideal_torque
+    torque_limit: 38.6701
+scenario:
+  scene:
+    type: single_joint
+    inertia: 1.029926
+    damping: 5.752637
+    gravity: false
+    q0: 0.7127
+    dq0: 0.0
+  test:
+    target: 1.1055
+    start_time: 0.0
+    type: step
+  simulation:
+    duration: 2.5
+    dt: 0.002
+  logging:
+    save_csv: true
+  plots:
+    position: true
+    velocity: true
+    torque: true
+    error: true
+    phase: true
+    frequency_response: false
+  output:
+    save_video: false

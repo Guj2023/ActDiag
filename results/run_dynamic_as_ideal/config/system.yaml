@@ -1,0 +1,9 @@
+controller:
+  type: pd_position
+  kp: 253.7387
+  kd: 3.2569
+actuator:
+  type: dynamic_torque
+  torque_limit: 38.6701
+  time_constant: 1.0e-9      # near zero => alpha = dt/(dt+0) ~ 1 (no lag)
+  torque_rate_limit: 1.0e+9  # effectively no rate limit
