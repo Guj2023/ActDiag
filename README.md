@@ -23,6 +23,7 @@ See how your actuator handles a simple step move:
 ```bash
 actdiag run --system examples/system_pd.yaml --scenario examples/scenario_step.yaml
 ```
+Output lands in `runs/<timestamp>/` automatically.
 
 ### 3. Fit to a reference
 Find the best gains to match a recording (`reference.csv`):
@@ -31,9 +32,9 @@ actdiag fit \
   --system examples/system_pd.yaml \
   --scenario examples/scenario_step.yaml \
   --reference reference.csv \
-  --search search.yaml \
-  --output-dir my_fit_results
+  --search search.yaml
 ```
+Output lands in `fits/<timestamp>/` automatically. Pass `--output-dir <path>` to override.
 
 ### 4. Run a parameter sweep
 Explore controller sensitivity or actuator/controller trade-offs:
@@ -41,9 +42,9 @@ Explore controller sensitivity or actuator/controller trade-offs:
 actdiag sweep \
   --system examples/system_dynamic_torque.yaml \
   --scenario examples/scenario_chirp.yaml \
-  --sweep examples/sweep_kp_tc.yaml \
-  --output-dir runs/sweep_kp_tc
+  --sweep examples/sweep_kp_tc.yaml
 ```
+Output lands in `sweeps/<timestamp>/` automatically. Use `--workers N` for parallel execution.
 
 ---
 
@@ -54,8 +55,7 @@ Defines your **Controller** (like PD or PID) and your **Actuator** (torque limit
 
 #### Actuator Types
 
-- **`ideal_torque`**: Simple clipped torque.
-- **`limited_torque`**: Equivalent to `ideal_torque`.
+- **`ideal_torque`** (alias: `limited_torque`): Simple clipped torque — no dynamics.
 - **`dynamic_torque`**: Control-oriented model with bandwidth and rate limits.
 
 ```yaml
@@ -87,8 +87,8 @@ simulation:
   dt: 0.001
 ```
 
-### Search (`search.yaml`) - *New in v0.5.0!*
-Defines the range for parameters you want to optimize.
+### Search (`search.yaml`)
+Defines the range for parameters you want to optimize with `fit`.
 
 ```yaml
 fit:
@@ -101,13 +101,34 @@ fit:
 ### Sweep (`sweep.yaml`)
 Defines a full Cartesian grid of parameter values and which summary metrics to report.
 
+Instead of listing every value explicitly, you can specify a range — all three forms resolve to the same flat list internally:
+
 ```yaml
 sweep:
   parameters:
+
+    # Explicit list (original style, still supported)
     controller.kp:
       values: [20, 40, 60, 80, 100]
+
+    # Step-based range (arange-style)
+    controller.kp:
+      min: 10
+      max: 100
+      step: 10          # → [10, 20, 30 … 100]
+
+    # N evenly-spaced points (linspace)
+    controller.kp:
+      min: 1
+      max: 100
+      num: 20           # → 20 linear points
+
+    # N log-spaced points — ideal for time constants and small gains
     actuator.time_constant:
-      values: [0.002, 0.005, 0.01, 0.02]
+      min: 0.001
+      max: 0.5
+      num: 15
+      scale: log        # → 15 points on log scale
 
   metrics:
     - tracking_rmse
@@ -118,31 +139,41 @@ sweep:
 ### Reference Data (`reference.csv`)
 For the `fit` command, you can provide a CSV file with your recorded data. **This argument is optional.**
 
-- **If provided:** It must contain at least a `time` column. Missing columns for `q`, `dq`, or `tau_applied` will default to `0.0`.
-- **If NOT provided:** `actdiag` will use the **Desired trajectory** (the target signals defined in your scenario) as the reference for fitting.
+- **If provided:** It must contain at least a `time` column. Missing columns for `q`, `dq`, or `tau_applied` default to `0.0`.
+- **If NOT provided:** `actdiag` uses the **desired trajectory** (from your scenario) as the reference for fitting.
 
 **Column names used for cost calculation:**
-- `time`: Time in seconds (Required).
+- `time`: Time in seconds (required).
 - `q`: Position in radians.
 - `dq`: Velocity in radians per second.
 - `tau_applied`: Torque applied in Newton-meters.
 
-> **Tip:** Every `run` command generates a `data/timeseries.csv` file that matches this structure perfectly, making it easy to use simulation results as fitting references.
+> **Tip:** Every `run` command generates a `data/timeseries.csv` that matches this structure perfectly.
 
 ---
 
 ## 📊 Outputs
 
-Every time you run `actdiag`, it creates a folder with:
-- **`data/timeseries.csv`**: A full record of the simulation. It includes `time`, `q`, `dq`, `q_des`, `dq_des`, `tau_applied`, and more.
-- **`figures/`**: Visual plots of position, velocity, and torque.
-- **`summary/`**: Calculated metrics like rise time, overshoot, and settling time.
-- **`video/`**: An MP4 of the simulation (if `--save-video` is used).
+### `run`
+Creates `runs/<timestamp>/` (or `--output-dir`) containing:
+- **`data/timeseries.csv`**: Full record of the simulation (`time`, `q`, `dq`, `q_des`, `tau_applied`, …).
+- **`figures/`**: Position, velocity, and torque plots.
+- **`summary/`**: Calculated metrics (rise time, overshoot, settling time).
+- **`video/`**: MP4 of the simulation (if `--save-video` is used).
 
-Every `sweep` creates:
-- **`summary.csv`**: One row per parameter combination.
-- **`plots/`**: `heatmap_<metric>.png` for all sweeps, plus `line_<metric>.png` for 1D sweeps.
-- **`cases/<parameter-slug>/`**: Full per-case run artifacts, named from the swept parameters and values.
+### `fit`
+Creates `fits/<timestamp>/` (or `--output-dir`) containing:
+- **`best_system.yaml`**: Drop-in replacement for your system YAML with the fitted parameters applied — pass directly to `actdiag run --system`.
+- **`best_fit.yaml`**: Raw best-fit parameter values for reference.
+- **`top_candidates.csv`**: Top 50 candidates ranked by total cost.
+- **`objective_breakdown.json`**: Cost breakdown for the best result.
+- **`plots/`**: Sim vs. reference overlays for position and velocity.
+
+### `sweep`
+Creates `sweeps/<timestamp>/` (or `--output-dir`) containing:
+- **`summary.csv`**: One row per parameter combination with all metrics.
+- **`plots/`**: `heatmap_<metric>.png` for 2D sweeps, `line_<metric>.png` for 1D sweeps.
+- **`cases/<parameter-slug>/`**: Full per-case run artifacts.
 
 Supported sweep metrics:
 - **`tracking_rmse`**: RMSE of position tracking error.
@@ -156,6 +187,7 @@ Supported sweep metrics:
 
 - **Step:** Jump to a target position.
 - **Sine:** Follow a smooth wave.
+- **Chirp:** Frequency sweep over time.
 - **Frequency Response:** Sweep through many frequencies to see the bandwidth (Bode plots).
 
 ## 🔁 Parameter Sweeps
@@ -169,15 +201,16 @@ Use sweeps when you want to:
 Notes:
 - Only 1D and 2D sweeps are supported.
 - Sweep axes must target `controller.*` or `actuator.*` parameters.
-- All parameter combinations are evaluated.
-- Re-running a sweep replaces the existing output directory.
-- Failed cases are recorded as unstable and do not stop the sweep.
+- All parameter combinations are evaluated (Cartesian product).
+- Output directory must not already exist (use a new path or let it auto-generate).
+- Failed cases are recorded as errors and do not stop the sweep.
+- Use `--workers N` to run cases in parallel (`0` = all CPUs). The live progress bar updates as each case completes, showing elapsed time, ETA, and the running best metric value.
 
 ---
 
 ## ⚙️ Requirements
 - Python 3.10+
-- MuJoCo, NumPy, Pandas, Matplotlib, Pydantic, PyYAML
+- MuJoCo, NumPy, Pandas, Matplotlib, Pydantic, PyYAML, Rich
 
 # ActDiag Roadmap
 
@@ -193,15 +226,13 @@ The development focuses on adding complexity only when it improves interpretabil
 ### v0.x — Current (Foundation)
 
 - Single-joint simulation with MuJoCo
-- Basic actuator models:
-  - `ideal_torque`
-  - `limited_torque`
+- Actuator models:
+  - `ideal_torque` / `limited_torque` (alias)
   - `dynamic_torque`
 - Standard test protocols:
-  - `step`
-  - `sine`
-  - `frequency_response`
-- Parameter fitting (`fit`) for controller gains (`kp`, `kd`)
+  - `step`, `sine`, `chirp`, `frequency_response`
+- Parameter fitting (`fit`) with automatic output and `best_system.yaml`
+- Parameter sweeps with range spec, parallel execution, and live TUI progress
 
 Goal:
 - Establish a reproducible testing and fitting pipeline
@@ -268,7 +299,7 @@ Goal:
   - Detect ambiguity
   - Report model mismatch
 - Design better excitation signals (e.g., chirp, multi-sine)
-- Expand from “simulate and fit” to:
+- Expand from "simulate and fit" to:
   - diagnose why systems fail
   - compare actuator/controller robustness across scenarios
 

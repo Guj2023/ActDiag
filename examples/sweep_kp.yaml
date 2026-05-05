@@ -3,7 +3,7 @@ sweep:
     controller.kp:
       min: 10
       max: 100
-      step: 10
+      step: 0.1
 
   metrics:
     - tracking_rmse
