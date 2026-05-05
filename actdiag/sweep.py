@@ -21,6 +21,7 @@ from actdiag.config import (
 from actdiag.logging_io import (
     create_run_paths,
     frequency_slug,
+    make_output_dir,
     RunPaths,
     save_frequency_response_summary,
     save_frequency_response_timeseries,
@@ -41,8 +42,10 @@ def run_sweep(
     system_path: Path,
     scenario_path: Path,
     sweep_path: Path,
-    output_dir: Path,
+    output_dir: Path | None = None,
 ) -> int:
+    output_dir = make_output_dir(Path.cwd(), "sweeps", output_dir)
+
     system_data = load_yaml_mapping(system_path)
     scenario_data = load_yaml_mapping(scenario_path)
     sweep_config = load_sweep_config(sweep_path)
@@ -50,7 +53,11 @@ def run_sweep(
     # Validate the base run config before enumerating cases.
     load_run_config_from_data(copy.deepcopy(system_data), copy.deepcopy(scenario_data))
 
-    _prepare_output_dir(output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError(
+            f"output directory already exists and is not empty: {output_dir}"
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
     _save_sweep_inputs(output_dir, system_path, scenario_path, sweep_path)
 
     parameter_names = list(sweep_config.parameters)
@@ -120,14 +127,6 @@ def run_sweep(
     print(f"Sweep complete: {output_dir}")
     print(f"Summary: {summary_path}")
     return 0
-
-
-def _prepare_output_dir(output_dir: Path) -> None:
-    if output_dir.is_dir():
-        shutil.rmtree(output_dir)
-    elif output_dir.exists():
-        output_dir.unlink()
-    output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _save_sweep_inputs(

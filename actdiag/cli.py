@@ -80,9 +80,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fit_parser.add_argument(
         "--output-dir",
-        required=True,
         type=Path,
-        help="Output directory for fit results.",
+        default=None,
+        help="Output directory for fit results. Defaults to fits/<timestamp>.",
     )
     fit_parser.set_defaults(handler=handle_fit)
 
@@ -100,9 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sweep_parser.add_argument(
         "--output-dir",
-        required=True,
         type=Path,
-        help="Output directory for sweep results.",
+        default=None,
+        help="Output directory for sweep results. Defaults to sweeps/<timestamp>.",
     )
     sweep_parser.set_defaults(handler=handle_sweep)
     
@@ -184,24 +184,27 @@ def handle_fit(args: argparse.Namespace) -> int:
     from actdiag.fit import run_fit
 
     reference_path = args.reference.resolve() if args.reference is not None else None
+    output_dir = args.output_dir.resolve() if args.output_dir is not None else None
 
     return run_fit(
         system_path=args.system.resolve(),
         scenario_path=args.scenario.resolve(),
         reference_path=reference_path,
         search_path=args.search.resolve(),
-        output_dir=args.output_dir.resolve(),
+        output_dir=output_dir,
     )
 
 
 def handle_sweep(args: argparse.Namespace) -> int:
     from actdiag.sweep import run_sweep
 
+    output_dir = args.output_dir.resolve() if args.output_dir is not None else None
+
     return run_sweep(
         system_path=args.system.resolve(),
         scenario_path=args.scenario.resolve(),
         sweep_path=args.sweep.resolve(),
-        output_dir=args.output_dir.resolve(),
+        output_dir=output_dir,
     )
 
 
