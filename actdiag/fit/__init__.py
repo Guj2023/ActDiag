@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import copy
+import itertools
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -31,35 +32,86 @@ from actdiag.signals import build_signal_series
 
 
 # ---------------------------------------------------------------------------
-# Top-level worker — must be module-level so ProcessPoolExecutor can pickle it
+# Per-process shared storage — populated once by the worker initializer so
+# the large read-only data (run_config, reference DataFrame, …) is pickled
+# only N_workers times instead of N_samples times.
 # ---------------------------------------------------------------------------
 
-def _fit_sample_worker(args: dict[str, Any]) -> EvaluationResult:
-    """Evaluate one parameter sample and return the result."""
+_WORKER_SHARED: dict = {}
+
+
+def _worker_initializer(
+    run_config: Any,
+    reference_interpolated: pd.DataFrame,
+    objective_weights: Any,
+    reference_metrics: Any,
+) -> None:
+    """Called once per worker process before any tasks are dispatched."""
+    _WORKER_SHARED["run_config"] = run_config
+    _WORKER_SHARED["reference_interpolated"] = reference_interpolated
+    _WORKER_SHARED["objective_weights"] = objective_weights
+    _WORKER_SHARED["reference_metrics"] = reference_metrics
+
+
+def _fit_sample_worker(sample: dict[str, float]) -> EvaluationResult:
+    """Evaluate one parameter sample using the per-process shared data."""
     return evaluate_sample(
-        args["sample"],
-        args["run_config"],
-        args["reference_interpolated"],
-        args["objective_weights"],
-        reference_metrics=args["reference_metrics"],
+        sample,
+        _WORKER_SHARED["run_config"],
+        _WORKER_SHARED["reference_interpolated"],
+        _WORKER_SHARED["objective_weights"],
+        reference_metrics=_WORKER_SHARED["reference_metrics"],
     )
 
 
 # ---------------------------------------------------------------------------
-# Sequential / parallel dispatch
+# Sequential / parallel dispatch with bounded in-flight futures
 # ---------------------------------------------------------------------------
 
 def _iter_fit_results(
-    all_args: list[dict[str, Any]], workers: int
+    samples: list[dict[str, float]],
+    workers: int,
+    run_config: Any,
+    reference_interpolated: pd.DataFrame,
+    objective_weights: Any,
+    reference_metrics: Any,
 ) -> Iterator[EvaluationResult]:
     if workers <= 1:
-        for args in all_args:
-            yield _fit_sample_worker(args)
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(_fit_sample_worker, args) for args in all_args]
-            for future in as_completed(futures):
+        for sample in samples:
+            yield evaluate_sample(
+                sample,
+                run_config,
+                reference_interpolated,
+                objective_weights,
+                reference_metrics=reference_metrics,
+            )
+        return
+
+    # Parallel path: shared data sent once per worker via initializer;
+    # only the tiny sample dict is pickled per task.
+    # At most (workers * 2) futures are in-flight at any time to keep the
+    # executor queue from ballooning with N_samples serialised payloads.
+    max_inflight = workers * 2
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_worker_initializer,
+        initargs=(run_config, reference_interpolated, objective_weights, reference_metrics),
+    ) as executor:
+        args_iter = iter(samples)
+        pending: set = set()
+
+        # Prime the pump up to the in-flight cap
+        for sample in itertools.islice(args_iter, max_inflight):
+            pending.add(executor.submit(_fit_sample_worker, sample))
+
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
                 yield future.result()
+                # Immediately replace each finished task with the next one
+                next_sample = next(args_iter, None)
+                if next_sample is not None:
+                    pending.add(executor.submit(_fit_sample_worker, next_sample))
 
 
 # ---------------------------------------------------------------------------
@@ -109,24 +161,14 @@ def run_fit(
         from actdiag.simulate import compute_step_response_metrics
         reference_metrics = compute_step_response_metrics(reference_interpolated, run_config.test)
 
-    # 4. Pre-build one args dict per sample
-    all_sample_args: list[dict[str, Any]] = [
-        {
-            "sample": sample,
-            "run_config": run_config,
-            "reference_interpolated": reference_interpolated,
-            "objective_weights": fit_config.objective,
-            "reference_metrics": reference_metrics,
-        }
-        for sample in samples
-    ]
-
-    # 5. Evaluation loop with Rich progress bar
+    # 4. Evaluation loop with Rich progress bar
     effective_workers = workers if workers > 0 else os.cpu_count() or 1
     worker_label = f" · {effective_workers} workers" if effective_workers > 1 else ""
     base_desc = f"Fitting {len(samples)} samples{worker_label}"
 
-    results: list[EvaluationResult] = []
+    # cost_records stores only scalar fields — no timeseries DataFrames.
+    # best_result is the single EvaluationResult that keeps a timeseries.
+    cost_records: list[dict[str, Any]] = []
     best_result: EvaluationResult | None = None
 
     with Progress(
@@ -139,11 +181,27 @@ def run_fit(
     ) as progress:
         task_id = progress.add_task(base_desc, total=len(samples))
 
-        for result in _iter_fit_results(all_sample_args, effective_workers):
-            results.append(result)
-
+        for result in _iter_fit_results(
+            samples,
+            effective_workers,
+            run_config,
+            reference_interpolated,
+            fit_config.objective,
+            reference_metrics,
+        ):
+            # Track running best — only best_result retains its timeseries
             if best_result is None or result.total_cost < best_result.total_cost:
                 best_result = result
+
+            # Accumulate a lightweight record (scalars only)
+            cost_records.append({
+                **result.parameters,
+                "total_cost": result.total_cost,
+                "mse_q": result.mse_q,
+                "mse_dq": result.mse_dq,
+                "mse_tau": result.mse_tau,
+                "metric_error": result.metric_error,
+            })
 
             desc = base_desc
             if best_result is not None and best_result.total_cost < 1e9:
@@ -151,6 +209,8 @@ def run_fit(
                     f"{k.split('.')[-1]}={v:.3g}"
                     for k, v in best_result.parameters.items()
                 )
+                if len(params_str) > 40:
+                    params_str = params_str[:37] + "..."
                 desc = f"{base_desc}  │  best cost={best_result.total_cost:.4g} ({params_str})"
             progress.update(task_id, advance=1, description=desc)
 
@@ -164,7 +224,7 @@ def run_fit(
     # 6. Save results
     save_fit_results(
         output_dir,
-        results,
+        cost_records,
         best_result,
         run_config.plots,
         reference_interpolated,
