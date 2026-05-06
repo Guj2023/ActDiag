@@ -22,6 +22,7 @@ from actdiag.fit.config import load_search_config
 from actdiag.logging_io import make_output_dir
 from actdiag.fit.evaluator import (
     EvaluationResult,
+    _failure_result,
     evaluate_sample,
     interpolate_reference,
     load_reference,
@@ -54,14 +55,23 @@ def _worker_initializer(
 
 
 def _fit_sample_worker(sample: dict[str, float]) -> EvaluationResult:
-    """Evaluate one parameter sample using the per-process shared data."""
-    return evaluate_sample(
-        sample,
-        _WORKER_SHARED["run_config"],
-        _WORKER_SHARED["reference_interpolated"],
-        _WORKER_SHARED["objective_weights"],
-        reference_metrics=_WORKER_SHARED["reference_metrics"],
-    )
+    """Evaluate one parameter sample using the per-process shared data.
+
+    Never raises — exceptions outside evaluate_sample's own try/except (e.g.
+    a missing _WORKER_SHARED key, a deepcopy failure, or a backend that cannot
+    initialise inside a spawned subprocess) are caught here and returned as a
+    failure result so the progress loop always receives a valid object.
+    """
+    try:
+        return evaluate_sample(
+            sample,
+            _WORKER_SHARED["run_config"],
+            _WORKER_SHARED["reference_interpolated"],
+            _WORKER_SHARED["objective_weights"],
+            reference_metrics=_WORKER_SHARED["reference_metrics"],
+        )
+    except Exception as exc:
+        return _failure_result(sample, error=f"{type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +101,22 @@ def _iter_fit_results(
     # only the tiny sample dict is pickled per task.
     # At most (workers * 2) futures are in-flight at any time to keep the
     # executor queue from ballooning with N_samples serialised payloads.
+    #
+    # We use the "forkserver" start context when available (Linux/macOS).
+    # Unlike "spawn" it re-uses a single already-initialised server process,
+    # which avoids per-worker SDK re-initialisation bugs (e.g. PhysX) while
+    # still being safer than raw "fork" for multithreaded code.
+    import multiprocessing as _mp
+    import sys as _sys
+    _mp_ctx = (
+        _mp.get_context("forkserver")
+        if _sys.platform != "win32"
+        else _mp.get_context("spawn")
+    )
     max_inflight = workers * 2
     with ProcessPoolExecutor(
         max_workers=workers,
+        mp_context=_mp_ctx,
         initializer=_worker_initializer,
         initargs=(run_config, reference_interpolated, objective_weights, reference_metrics),
     ) as executor:
@@ -161,7 +184,23 @@ def run_fit(
         from actdiag.simulate import compute_step_response_metrics
         reference_metrics = compute_step_response_metrics(reference_interpolated, run_config.test)
 
-    # 4. Evaluation loop with Rich progress bar
+    # 4a. Sequential probe — run one sample in the main process before
+    #     spawning workers.  This catches config errors (wrong parameter path,
+    #     bad backend, missing library…) immediately with a clear message
+    #     instead of silently producing 100 % failures later.
+    probe = evaluate_sample(
+        samples[0],
+        run_config,
+        reference_interpolated,
+        fit_config.objective,
+        reference_metrics=reference_metrics,
+    )
+    if probe.total_cost >= 1e9:
+        msg = probe.error or "unknown error — check system/scenario/search configs"
+        print(f"error: probe simulation failed: {msg}", file=__import__('sys').stderr)
+        return 1
+
+    # 4b. Evaluation loop with Rich progress bar
     effective_workers = workers if workers > 0 else os.cpu_count() or 1
     worker_label = f" · {effective_workers} workers" if effective_workers > 1 else ""
     base_desc = f"Fitting {len(samples)} samples{worker_label}"
@@ -201,6 +240,7 @@ def run_fit(
                 "mse_dq": result.mse_dq,
                 "mse_tau": result.mse_tau,
                 "metric_error": result.metric_error,
+                "error": result.error,
             })
 
             desc = base_desc
@@ -215,7 +255,23 @@ def run_fit(
             progress.update(task_id, advance=1, description=desc)
 
     if best_result is None or best_result.total_cost >= 1e9:
-        print("Error: All simulations failed.")
+        # Surface the first error captured from the workers
+        first_error = next(
+            (r["error"] for r in cost_records if r.get("error")),
+            None,
+        )
+        if first_error:
+            print(
+                f"error: all simulations failed in worker processes.\n"
+                f"  First error: {first_error}\n"
+                f"  The probe ran fine sequentially — this is likely a backend\n"
+                f"  incompatibility with spawned subprocesses (e.g. PhysX).\n"
+                f"  Try --workers 1 to run sequentially.",
+                file=__import__('sys').stderr,
+            )
+        else:
+            print("error: all simulations failed (no error details captured).",
+                  file=__import__('sys').stderr)
         return 1
 
     # 5. Build best-fit system config by patching the original system YAML

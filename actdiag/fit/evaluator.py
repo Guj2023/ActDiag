@@ -22,6 +22,7 @@ class EvaluationResult:
     parameters: dict[str, float]
     timeseries: pd.DataFrame
     metrics: dict[str, float | None] | None
+    error: str | None = None
 
 
 def load_reference(path: Path) -> pd.DataFrame:
@@ -133,11 +134,13 @@ def evaluate_sample(
             metrics=sim_metrics,
         )
 
-    except Exception:
-        return _failure_result(sample)
+    except Exception as exc:
+        return _failure_result(sample, error=f"{type(exc).__name__}: {exc}")
 
 
-def _failure_result(sample: dict[str, float]) -> EvaluationResult:
+def _failure_result(
+    sample: dict[str, float], error: str | None = None
+) -> EvaluationResult:
     return EvaluationResult(
         total_cost=1e9,
         mse_q=1e9,
@@ -147,4 +150,5 @@ def _failure_result(sample: dict[str, float]) -> EvaluationResult:
         parameters=sample,
         timeseries=pd.DataFrame(),
         metrics=None,
+        error=error,
     )
