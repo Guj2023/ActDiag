@@ -84,6 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output directory for fit results. Defaults to fits/<timestamp>.",
     )
+    fit_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel worker processes (default: 1). Use 0 for all CPUs.",
+    )
     fit_parser.set_defaults(handler=handle_fit)
 
     sweep_parser = subparsers.add_parser(
@@ -198,6 +204,7 @@ def handle_fit(args: argparse.Namespace) -> int:
         reference_path=reference_path,
         search_path=args.search.resolve(),
         output_dir=output_dir,
+        workers=args.workers,
     )
 
 
