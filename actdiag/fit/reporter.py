@@ -13,7 +13,7 @@ from actdiag.plotting import save_plots
 
 def save_fit_results(
     output_dir: Path,
-    results: list[EvaluationResult],
+    cost_records: list[dict[str, Any]],
     best_result: EvaluationResult,
     plot_config: Any,
     reference_interpolated: pd.DataFrame,
@@ -32,12 +32,8 @@ def save_fit_results(
         yaml.dump(best_result.parameters, f)
 
     # 3. top_candidates.csv
-    # Sort results by cost
-    sorted_results = sorted(results, key=lambda x: x.total_cost)
-    top_data = []
-    for res in sorted_results[:50]: # Save top 50
-        row = {**res.parameters, "total_cost": res.total_cost}
-        top_data.append(row)
+    sorted_records = sorted(cost_records, key=lambda r: r["total_cost"])
+    top_data = sorted_records[:50]
     
     top_candidates_path = output_dir / "top_candidates.csv"
     pd.DataFrame(top_data).to_csv(top_candidates_path, index=False)

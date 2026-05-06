@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import copy
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from itertools import product
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
+from itertools import product, islice
 import math
 import os
 from pathlib import Path
@@ -187,6 +187,8 @@ def run_sweep(
                 params_str = "  ".join(
                     f"{k.split('.')[-1]}={v:.3g}" for k, v in best_params.items()
                 )
+                if len(params_str) > 40:
+                    params_str = params_str[:37] + "..."
                 desc = f"{base_desc}  │  best {primary_metric}={best_val:.4g} ({params_str})"
             progress.update(task_id, advance=1, description=desc)
 
@@ -214,11 +216,25 @@ def _iter_results(
     if workers <= 1:
         for args in all_args:
             yield _sweep_case_worker(args)
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(_sweep_case_worker, args) for args in all_args]
-            for future in as_completed(futures):
+        return
+
+    # Bounded in-flight: at most (workers * 2) serialised payloads queued at
+    # once so the executor's internal queue does not balloon to N_cases items.
+    max_inflight = workers * 2
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        args_iter = iter(all_args)
+        pending: set = set()
+
+        for args in islice(args_iter, max_inflight):
+            pending.add(executor.submit(_sweep_case_worker, args))
+
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
                 yield future.result()
+                next_args = next(args_iter, None)
+                if next_args is not None:
+                    pending.add(executor.submit(_sweep_case_worker, next_args))
 
 
 # ---------------------------------------------------------------------------
