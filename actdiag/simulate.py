@@ -10,6 +10,7 @@ from actdiag.actuator import build_actuator
 from actdiag.backends import MuJoCoBackend, build_backend
 from actdiag.config import FrequencyResponseTestProfile, RunConfig, StepTestProfile
 from actdiag.controller import ControlState, build_controller
+from actdiag.scene import build_single_joint_model, initialize_scene_state
 from actdiag.signals import (
     SignalSeries,
     build_frequency_response_signal,
@@ -134,13 +135,19 @@ def _simulate_signal_series(
         run_config.controller, model, run_config.simulation.dt
     )
 
-    if save_video and not isinstance(backend, MuJoCoBackend):
-        raise ValueError("video export is only supported with the mujoco backend")
-    recorder = (
-        VideoRecorder(backend.model, video_fps)
-        if save_video and isinstance(backend, MuJoCoBackend)
-        else None
-    )
+    render_model: mujoco.MjModel | None = None
+    render_data: mujoco.MjData | None = None
+    if save_video:
+        if isinstance(backend, MuJoCoBackend):
+            recorder: VideoRecorder | None = VideoRecorder(backend.model, video_fps)
+        else:
+            render_model = build_single_joint_model(
+                run_config.scene, run_config.simulation.dt
+            )
+            render_data = initialize_scene_state(render_model, run_config.scene)
+            recorder = VideoRecorder(render_model, video_fps)
+    else:
+        recorder = None
 
     records: dict[str, list[float]] = {
         "time": [],
@@ -159,10 +166,17 @@ def _simulate_signal_series(
 
     final_index = len(signals.time) - 1
     for index, time_value in enumerate(signals.time):
-        if recorder is not None and isinstance(backend, MuJoCoBackend):
-            recorder.maybe_capture(backend.data)
-
         q, dq = backend.get_state()
+        if recorder is not None:
+            if isinstance(backend, MuJoCoBackend):
+                recorder.maybe_capture(backend.data)
+            else:
+                assert render_data is not None and render_model is not None
+                render_data.qpos[0] = q
+                render_data.qvel[0] = dq
+                render_data.time = float(time_value)
+                mujoco.mj_forward(render_model, render_data)
+                recorder.maybe_capture(render_data)
         q_des = float(signals.q_des[index])
         dq_des = float(signals.dq_des[index])
         qdd_des = float(signals.qdd_des[index])
