@@ -6,3 +6,6 @@ runs/
 smoke_runs/
 real_data/
 fits/
+sweeps/
+results/
+.claude/

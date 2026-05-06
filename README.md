@@ -85,7 +85,19 @@ test:
 simulation:
   duration: 2.0
   dt: 0.001
+  backend: mujoco   # or "physx" — see PhysX section below
 ```
+
+#### Physics backend: `mujoco` vs `physx`
+
+`simulation.backend` controls which physics engine runs the simulation. Both model an identical single revolute joint.
+
+| Backend | Default | Notes |
+|---|---|---|
+| `mujoco` | ✓ | Default. No extra install. |
+| `physx` | — | NVIDIA PhysX 4 via pyphysx — requires a manual build (see below). |
+
+Comparing backends lets you validate that your controller behaves consistently across simulators (steady-state should match; transients may differ slightly due to different integrators).
 
 ### Search (`search.yaml`)
 Defines the range for parameters you want to optimize with `fit`.
@@ -212,6 +224,72 @@ Notes:
 - Python 3.10+
 - MuJoCo, NumPy, Pandas, Matplotlib, Pydantic, PyYAML, Rich
 
+### Optional: PhysX backend (Apple Silicon / arm64 macOS)
+
+The NVIDIA PhysX 4 Conan package does not ship an arm64 binary, so pyphysx must be built from source with the arm64 patches applied.
+
+```bash
+# 1. Prerequisites
+brew install cmake ninja eigen
+
+# 2. Download and patch PhysX 4.1.2 source
+curl -L "https://github.com/NVIDIAGameWorks/PhysX/archive/a2c0428acab643e60618c681b501e86f7fd558cc.zip" \
+     -o /tmp/physx-src.zip
+unzip /tmp/physx-src.zip -d /tmp/
+```
+
+Apply the following patches (from NVIDIAGameWorks/PhysX commit `9fb98ab`):
+- `pxshared/include/foundation/PxPreprocessor.h` — treat arm64 Mac as macOS, not iOS
+- `physx/source/compiler/cmake/mac/CMakeLists.txt` — set `-arch arm64`, remove `-msse2` / `-Werror`
+- `physx/source/foundation/src/unix/PsUnixFPU.cpp` — disable x86 SIMD FPU paths on macOS
+- `physx/source/geomutils/include/GuSIMDHelpers.h` — use scalar store path on macOS
+- `physx/source/physxextensions/src/serialization/SnSerialUtils.cpp` — add macOS ARM platform tag
+- `physx/buildtools/presets/public/mac64.xml` — switch to shared libs
+
+Also add `cmake --install` targets to `physx/source/compiler/cmake/mac/CMakeLists.txt`
+(see the Conan Center patch `0005-CMake-macos-ios-android-install-targets.patch`).
+
+```bash
+# 3. Build PhysX for arm64
+PHYSX_SRC="/tmp/PhysX-a2c0428acab643e60618c681b501e86f7fd558cc"
+cmake -S "${PHYSX_SRC}/physx/compiler/public" -B /tmp/physx-arm64-build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DTARGET_BUILD_PLATFORM=mac \
+      -DPX_BUILDSNIPPETS=OFF -DPX_BUILDPUBLICSAMPLES=OFF \
+      "-DCMAKEMODULES_PATH=${PHYSX_SRC}/externals/cmakemodules" \
+      "-DPHYSX_ROOT_DIR=${PHYSX_SRC}/physx" \
+      -DPX_GENERATE_STATIC_LIBRARIES=ON \
+      "-DPXSHARED_PATH=${PHYSX_SRC}/pxshared" \
+      -DNV_APPEND_CONFIG_NAME=OFF -DNV_USE_GAMEWORKS_OUTPUT_DIRS=OFF \
+      -DNV_FORCE_64BIT_SUFFIX=OFF -DNV_FORCE_32BIT_SUFFIX=OFF \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+cmake --build /tmp/physx-arm64-build -j$(sysctl -n hw.logicalcpu)
+
+# 4. Clone pyphysx and build against the local arm64 PhysX
+git clone https://github.com/petrikvladimir/pyphysx.git /tmp/pyphysx-arm64
+```
+
+Edit `/tmp/pyphysx-arm64/CMakeLists.txt` to:
+- Remove the `physx/4.1.1` Conan requirement
+- Add `include_directories` for PhysX and pxshared headers
+- Link against the static libs in `/tmp/physx-arm64-build/sdk_source_bin/`
+- Add `tinyobjloader` as a source file in the module (copy `tiny_obj_loader.h/cc` to `include/` and `src/`)
+- Add `/opt/homebrew/opt/eigen/include/eigen3` for Eigen
+
+Also add `set_mass_space_inertia_tensor` / `get_mass_space_inertia_tensor` bindings to
+`include/RigidDynamic.h` and `src/pyphysx.cpp`.
+
+```bash
+# 5. Install the modified pyphysx (no extra Python deps needed)
+pip install /tmp/pyphysx-arm64 --no-deps
+pip install numpy-quaternion
+```
+
+```bash
+# 6. Verify
+python -c "from pyphysx._pyphysx import Scene, RigidDynamic; s = Scene(); print('pyphysx ok')"
+```
+
 # ActDiag Roadmap
 
 ---
@@ -226,6 +304,7 @@ The development focuses on adding complexity only when it improves interpretabil
 ### v0.x — Current (Foundation)
 
 - Single-joint simulation with MuJoCo
+- Pluggable physics backends: `mujoco` (default) and `physx` (NVIDIA PhysX 4 via pyphysx)
 - Actuator models:
   - `ideal_torque` / `limited_torque` (alias)
   - `dynamic_torque`
