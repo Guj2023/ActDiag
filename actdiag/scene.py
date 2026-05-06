@@ -7,6 +7,20 @@ import mujoco
 from actdiag.config import SingleJointSceneProfile
 
 
+def joint_com_x(inertia: float, mass: float = 1.0) -> float:
+    """Return the COM offset along body-X [m] that corresponds to *inertia*.
+
+    The single-joint scene models a rigid link whose rotational inertia about
+    the pivot is *inertia* [kg·m²].  The COM is placed at this distance from
+    the pivot so that the heuristic ``I_pivot ≈ mass * com_x² / 0.4`` holds
+    (i.e. a uniform rod of the same inertia has its COM at this location).
+
+    Both the MuJoCo and PhysX backends must use this function to ensure that
+    gravity torques are consistent.
+    """
+    return min(0.15, max(0.03, math.sqrt(inertia * 0.4 / mass)))
+
+
 def build_single_joint_model(
     scene_profile: SingleJointSceneProfile, dt: float
 ) -> mujoco.MjModel:
@@ -14,7 +28,7 @@ def build_single_joint_model(
     gravity = "0 0 -9.81" if joint.gravity else "0 0 0"
 
     mass = 1.0
-    com_x = min(0.15, max(0.03, math.sqrt(joint.inertia * 0.4 / mass)))
+    com_x = joint_com_x(joint.inertia, mass)
     iyy = max(joint.inertia - (mass * (com_x**2)), 1e-5)
     ixx = max(joint.inertia, 1e-5)
     izz = max(joint.inertia, 1e-5)
