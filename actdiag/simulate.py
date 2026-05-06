@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 
 from actdiag.actuator import build_actuator
+from actdiag.backends import MuJoCoBackend, build_backend
 from actdiag.config import FrequencyResponseTestProfile, RunConfig, StepTestProfile
 from actdiag.controller import ControlState, build_controller
-from actdiag.scene import build_single_joint_model, initialize_scene_state
 from actdiag.signals import (
     SignalSeries,
     build_frequency_response_signal,
@@ -119,13 +119,28 @@ def _simulate_signal_series(
     save_video: bool = False,
     video_fps: int = 30,
 ) -> SimulationArtifacts:
-    model = build_single_joint_model(run_config.scene, run_config.simulation.dt)
-    data = initialize_scene_state(model, run_config.scene)
+    backend = build_backend(
+        run_config.scene, run_config.simulation.dt, run_config.simulation.backend
+    )
     actuator = build_actuator(run_config.actuator, run_config.simulation.dt)
+
+    # InverseDynamicsController needs the MuJoCo model for mj_inverse — only
+    # available with the MuJoCo backend.
+    if isinstance(backend, MuJoCoBackend):
+        model = backend.model
+    else:
+        model = None
     controller = build_controller(
         run_config.controller, model, run_config.simulation.dt
     )
-    recorder = VideoRecorder(model, video_fps) if save_video else None
+
+    if save_video and not isinstance(backend, MuJoCoBackend):
+        raise ValueError("video export is only supported with the mujoco backend")
+    recorder = (
+        VideoRecorder(backend.model, video_fps)
+        if save_video and isinstance(backend, MuJoCoBackend)
+        else None
+    )
 
     records: dict[str, list[float]] = {
         "time": [],
@@ -144,11 +159,10 @@ def _simulate_signal_series(
 
     final_index = len(signals.time) - 1
     for index, time_value in enumerate(signals.time):
-        if recorder is not None:
-            recorder.maybe_capture(data)
+        if recorder is not None and isinstance(backend, MuJoCoBackend):
+            recorder.maybe_capture(backend.data)
 
-        q = float(data.qpos[0])
-        dq = float(data.qvel[0])
+        q, dq = backend.get_state()
         q_des = float(signals.q_des[index])
         dq_des = float(signals.dq_des[index])
         qdd_des = float(signals.qdd_des[index])
@@ -186,9 +200,7 @@ def _simulate_signal_series(
         if index == final_index:
             continue
 
-        data.qfrc_applied[0] = actuator_output.tau_applied
-        mujoco.mj_step(model, data)
-        data.qfrc_applied[0] = 0.0
+        backend.apply_torque_and_step(actuator_output.tau_applied)
 
     if recorder is not None:
         frames = recorder.frames

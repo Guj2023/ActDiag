@@ -89,13 +89,17 @@ class NoController:
 
 
 def build_controller(
-    profile: ControllerProfile, model: mujoco.MjModel, dt: float
+    profile: ControllerProfile, model: mujoco.MjModel | None, dt: float
 ) -> PDController | PIDController | InverseDynamicsController | NoController:
     if isinstance(profile, PDControllerProfile):
         return PDController(profile)
     if isinstance(profile, PIDControllerProfile):
         return PIDController(profile, dt)
     if isinstance(profile, InverseDynamicsControllerProfile):
+        if model is None:
+            raise ValueError(
+                "inverse_dynamics controller requires the mujoco backend"
+            )
         return InverseDynamicsController(profile, model)
     if isinstance(profile, NoneControllerProfile):
         return NoController(profile)
