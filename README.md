@@ -97,7 +97,52 @@ simulation:
 | `mujoco` | ✓ | Default. No extra install. |
 | `physx` | — | NVIDIA PhysX 4 via pyphysx — requires a manual build (see below). |
 
-Comparing backends lets you validate that your controller behaves consistently across simulators (steady-state should match; transients may differ slightly due to different integrators).
+---
+
+##### How the backends are kept physically equivalent
+
+Both engines model the same 1-DOF revolute joint, but their internal conventions differ in two important ways. The PhysX backend corrects for both so the equations of motion are identical to MuJoCo.
+
+**1. Gravity torque — analytical injection**
+
+MuJoCo automatically computes gravitational torque from the link's mass distribution: the COM sits `com_x` metres along the arm from the pivot, so gravity produces a joint torque
+
+```
+τ_grav = m · g · com_x · cos(q)
+```
+
+PhysX applies gravity as a body force at the rigid-body COM, which in the D6-joint model is placed at the pivot (origin). A force applied at zero moment arm produces **zero rotational torque** — the arm behaves as if gravity is absent regardless of the `gravity: true` setting.
+
+Fix: PhysX body gravity is always disabled (`link.disable_gravity()`). The gravity torque is injected analytically each step using the same `com_x` formula as MuJoCo's `scene.py`, so both backends see an identical load.
+
+**2. Angular damping — analytical injection**
+
+MuJoCo's `joint.damping` (`b`) adds a viscous torque directly:
+```
+τ_damp = −b · dq          [N·m·s/rad]
+```
+
+PhysX's `set_angular_damping(d)` instead scales angular velocity each step:
+```
+ω_new = ω_old · (1 − d · dt)
+```
+Substituting into the equation of motion, the effective damping torque is `d·I·ω` — **not** `d·ω`. With `I = 0.05 kg·m²` and `d = 0.1`, the effective damping torque is `0.005·ω`, which is **20× weaker** than MuJoCo's `0.1·ω`. This shifts the damping ratio significantly and changes both oscillation frequency and decay envelope.
+
+Fix: PhysX angular damping is set to `0.0`. The joint damping torque `−b·dq` is injected analytically alongside the gravity torque each step.
+
+---
+
+##### Residual difference after the fixes
+
+After both corrections the equations of motion are identical. The only remaining difference is the **integrator**:
+
+| Property | MuJoCo | PhysX |
+|---|---|---|
+| Integration scheme | RK4 (4th-order) | Semi-implicit Euler (1st-order) |
+| Per-step error | O(dt⁵) | O(dt²) |
+| Energy behaviour | Near-exact | Slightly dissipative |
+
+For typical settings (`dt = 0.002 s`, `ωn ≈ 8–11 rad/s`, `ωn·dt ≈ 0.02`), the integrator difference is very small — expect closely matching trajectories with only a slight phase drift over long windows. Qualitative behaviour (oscillation vs. overshoot, settling time, steady-state) should be indistinguishable.
 
 ### Search (`search.yaml`)
 Defines the range for parameters you want to optimize with `fit`.

@@ -99,15 +99,37 @@ class PhysXBackend:
         #   zero rotational effect.  The correct gravity *torque* is computed
         #   analytically and injected in apply_torque_and_step() instead.
         link = RigidDynamic()
+        link.set_mass(_mass)
         link.set_mass(self._mass)
         link.set_mass_space_inertia_tensor(
             np.array([joint.inertia, joint.inertia, joint.inertia], dtype=np.float32)
         )
-        link.set_angular_damping(float(joint.damping))
-        link.set_linear_damping(100.0)  # suppress translation drift
-        link.disable_gravity()          # gravity torque is applied manually
+        # Angular damping: PhysX applies damping as ω *= (1 - d*dt), which
+        # makes the effective torque d*I*ω — NOT d*ω as MuJoCo's joint damping.
+        # With d=0.1 and I=0.05, the effective damping torque is only 0.005*ω
+        # vs MuJoCo's 0.1*ω — 20× less.  We therefore disable PhysX angular
+        # damping entirely and inject τ_damp = -b*dq analytically each step,
+        # identical to how MuJoCo's joint.damping is handled.
+        link.set_angular_damping(0.0)
+        link.set_linear_damping(100.0)  # suppress translation drift only
+
+        # PhysX places the rigid-body COM at the link origin (the pivot).
+        # Gravity applied at the pivot produces zero torque about the hinge,
+        # making the body act as if there were no gravity load.  We instead
+        # always disable PhysX body gravity and inject the gravity torque
+        # analytically — exactly as MuJoCo computes it from the COM offset.
+        # Formula: τ_grav = m · g · com_x · cos(q)
+        # com_x mirrors the offset used in scene.py / build_single_joint_model().
+        link.disable_gravity()
         self._px_scene.add_actor(link)
         self._link = link
+
+        # Store per-step injection parameters.
+        self._gravity_enabled = bool(joint.gravity)
+        self._damping = float(joint.damping)
+        self._mass = _mass
+        self._G = 9.81
+        self._com_x = min(0.15, max(0.03, math.sqrt(joint.inertia * 0.4 / _mass)))
 
         # --- D6 joint (revolute about Y) ---------------------------------
         # PhysX D6 TWIST == rotation around joint-local X.
@@ -140,16 +162,14 @@ class PhysXBackend:
         return angle, dq
 
     def apply_torque_and_step(self, torque: float) -> None:
-        total = torque
+        q, dq = self.get_state()
+        total = float(torque)
+        # Inject joint damping analytically: τ = -b·dq  (matches MuJoCo joint.damping)
+        total -= self._damping * dq
+        # Inject gravity torque analytically: τ = m·g·com_x·cos(q)
         if self._gravity_enabled:
-            # Gravity torque about the Y rotation axis due to COM offset:
-            #   τ_y = m · g · com_x · cos(q)
-            # Derivation: COM in world frame = (com_x·cos q, 0, −com_x·sin q);
-            # gravity force = (0, 0, −m·g); cross-product Y component gives the
-            # formula above.  Matches what MuJoCo computes from the geometry.
-            q, _ = self.get_state()
             total += self._mass * self._G * self._com_x * math.cos(q)
-        self._link.add_torque(np.array([0.0, float(total), 0.0], dtype=np.float32))
+        self._link.add_torque(np.array([0.0, total, 0.0], dtype=np.float32))
         self._px_scene.simulate(self.dt)  # simulate() calls fetchResults internally
 
     # ------------------------------------------------------------------
