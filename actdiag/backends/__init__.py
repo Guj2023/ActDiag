@@ -10,8 +10,11 @@ def build_backend(scene_profile, dt: float, backend_name: str) -> PhysicsBackend
     if backend_name == "physx":
         from actdiag.backends.physx_backend import PhysXBackend
         return PhysXBackend(scene_profile, dt)
+    if backend_name == "openmodelica":
+        from actdiag.backends.openmodelica_backend import OpenModelicaBackend
+        return OpenModelicaBackend(scene_profile, dt)
     raise ValueError(
-        f"unsupported backend {backend_name!r} — choose 'mujoco' or 'physx'"
+        f"unsupported backend {backend_name!r} — choose 'mujoco', 'physx', or 'openmodelica'"
     )
 
 

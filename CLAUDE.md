@@ -19,7 +19,14 @@ actdiag run --system examples/system_pd.yaml --scenario examples/scenario_step.y
 actdiag run --system examples/system_pd.yaml --scenario examples/scenario_sine.yaml --output-dir /tmp/my_run
 ```
 
-There is no test suite.
+```bash
+# Run the test suite (pytest required: pip install pytest)
+python -m pytest                         # 184 tests, ~1 s
+python -m pytest -q                      # quiet
+python -m pytest tests/test_simulate.py  # one module
+```
+
+Tests live in `tests/` and cover: config parsing, signals, actuator, controller, scene, MuJoCo backend physics, OpenModelica error-handling, and sweep metrics. No optional backends (PhysX, OpenModelica) need to be installed.
 
 ## Architecture
 

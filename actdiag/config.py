@@ -196,7 +196,7 @@ class TorqueSineTestProfile(StrictModel):
 class SimulationConfig(StrictModel):
     duration: PositiveFloat | None = None
     dt: PositiveFloat
-    backend: Literal["mujoco", "physx"] = "mujoco"
+    backend: Literal["mujoco", "physx", "openmodelica"] = "mujoco"
 
 
 class LoggingConfig(StrictModel):

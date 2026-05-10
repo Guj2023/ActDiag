@@ -1,13 +1,13 @@
 # ActDiag
 
-ActDiag is a simple tool for testing and tuning actuators in simulation. 
-It uses **MuJoCo** to simulate how your actuator behaves and helps you find the best controller settings.
+ActDiag is a diagnostic and tuning tool for actuators in simulation. It simulates a single revolute joint with pluggable physics backends — **MuJoCo** (default), **NVIDIA PhysX** (via pyphysx), and **OpenModelica** (FMI 2.0 Co-Simulation, no MATLAB required) — and helps you find the best controller settings, validate that different simulators agree, and quantify how your actuator actually behaves.
 
 ## 🚀 What can it do?
 
-1.  **Run Simulations (`run`):** Test your actuator with a specific controller and see how it follows a target (step, sine, or frequency sweep).
-2.  **Fit Parameters (`fit`):** Automatically find the best controller gains (`kp`, `kd`) to match a real-world reference trajectory.
-3.  **Sweep Parameters (`sweep`):** Systematically scan 1D or 2D controller and actuator settings and compare tracking and stability metrics.
+1. **Run Simulations (`run`):** Test your actuator with any supported physics backend against a step, sine, chirp, or frequency-sweep reference.
+2. **Compare Backends:** Run the same scenario under MuJoCo, PhysX, and OpenModelica and overlay the results to catch sim-to-sim discrepancies before they become sim-to-real problems.
+3. **Fit Parameters (`fit`):** Automatically find the best controller gains (`kp`, `kd`) to match a real-world reference trajectory.
+4. **Sweep Parameters (`sweep`):** Systematically scan 1D or 2D controller and actuator settings and compare tracking and stability metrics across the full grid.
 
 ---
 
@@ -19,11 +19,22 @@ pip install -e .
 ```
 
 ### 2. Run a simulation
-See how your actuator handles a simple step move:
+See how your actuator handles a simple step move (MuJoCo default):
 ```bash
 actdiag run --system examples/system_pd.yaml --scenario examples/scenario_step.yaml
 ```
 Output lands in `runs/<timestamp>/` automatically.
+
+Switch physics backend without changing any config file:
+```bash
+# PhysX backend (requires arm64 pyphysx build — see Requirements)
+actdiag run --system examples/system_pd.yaml --scenario examples/scenario_step.yaml \
+    -- simulation.backend physx
+
+# OpenModelica FMI backend (requires omc + fmpy — see Requirements)
+actdiag run --system examples/system_pd.yaml --scenario examples/scenario_step.yaml \
+    -- simulation.backend openmodelica
+```
 
 ### 3. Fit to a reference
 Find the best gains to match a recording (`reference.csv`):
@@ -85,17 +96,22 @@ test:
 simulation:
   duration: 2.0
   dt: 0.001
-  backend: mujoco   # or "physx" — see PhysX section below
+  backend: mujoco   # "mujoco" (default), "physx", or "openmodelica"
 ```
 
-#### Physics backend: `mujoco` vs `physx`
+#### Physics backend: `mujoco`, `physx`, `openmodelica`
 
-`simulation.backend` controls which physics engine runs the simulation. Both model an identical single revolute joint.
+`simulation.backend` controls which physics engine runs the simulation. All three model an identical single revolute joint with the same equation of motion:
+
+```
+I · q̈  =  τ_cmd  −  b · q̇  [+  m · g · com_x · cos(q)]
+```
 
 | Backend | Default | Notes |
 |---|---|---|
-| `mujoco` | ✓ | Default. No extra install. |
-| `physx` | — | NVIDIA PhysX 4 via pyphysx — requires a manual build (see below). |
+| `mujoco` | ✓ | Default. No extra install. RK4 integrator. |
+| `physx` | — | NVIDIA PhysX 4 via pyphysx — requires a manual arm64 build (see below). |
+| `openmodelica` | — | FMI 2.0 Co-Simulation FMU compiled by OpenModelica — free, no MATLAB needed. |
 
 ---
 
@@ -117,18 +133,35 @@ Fix: PhysX body gravity is always disabled (`link.disable_gravity()`). The gravi
 
 **2. Angular damping — analytical injection**
 
-MuJoCo's `joint.damping` (`b`) adds a viscous torque directly:
+MuJoCo's `joint.damping` (`b`) adds a viscous torque at each integration stage:
 ```
-τ_damp = −b · dq          [N·m·s/rad]
+τ_damp = −b · dq          units: N·m·s/rad
 ```
+This gives exponential velocity decay with time constant **τ = I / b**.
 
-PhysX's `set_angular_damping(d)` instead scales angular velocity each step:
+PhysX's `set_angular_damping(d)` does something physically equivalent but with a different parameterisation. Empirical measurement (zero external torque, free decay from ω₀ = 1 rad/s) confirms it applies a **direct velocity scaling** each step:
 ```
 ω_new = ω_old · (1 − d · dt)
 ```
-Substituting into the equation of motion, the effective damping torque is `d·I·ω` — **not** `d·ω`. With `I = 0.05 kg·m²` and `d = 0.1`, the effective damping torque is `0.005·ω`, which is **20× weaker** than MuJoCo's `0.1·ω`. This shifts the damping ratio significantly and changes both oscillation frequency and decay envelope.
+This is a valid first-order discretisation of `dω/dt = −d·ω`, giving exponential decay with time constant **τ = 1 / d**. The physics is real — but `d` has units of **1/s** (inverse time constant), not N·m·s/rad like MuJoCo's `b`.
 
-Fix: PhysX angular damping is set to `0.0`. The joint damping torque `−b·dq` is injected analytically alongside the gravity torque each step.
+The consequence: for the same numerical value the two parameters encode very different damping strengths:
+
+| Parameter | Damping torque | Decay time constant |
+|---|---|---|
+| MuJoCo `joint.damping = b` | −b · ω | I / b |
+| PhysX `angular_damping = d` | −(d · I) · ω | 1 / d |
+
+With `b = 0.1 N·m·s/rad`, `d = 0.1 1/s`, `I = 0.05 kg·m²`:
+
+| | MuJoCo | PhysX (d=0.1) |
+|---|---|---|
+| Effective damping torque | −0.1 · ω | −0.005 · ω |
+| Velocity decay τ | **0.5 s** | **10 s** |
+
+PhysX damps the joint 20× more slowly, which visibly changes the oscillation envelope and damping ratio.
+
+Fix: PhysX angular damping is set to `0.0`. The joint damping torque `−b·dq` is injected analytically alongside the gravity torque each step, using exactly the same formula and units as MuJoCo.
 
 ---
 
@@ -143,6 +176,59 @@ After both corrections the equations of motion are identical. The only remaining
 | Energy behaviour | Near-exact | Slightly dissipative |
 
 For typical settings (`dt = 0.002 s`, `ωn ≈ 8–11 rad/s`, `ωn·dt ≈ 0.02`), the integrator difference is very small — expect closely matching trajectories with only a slight phase drift over long windows. Qualitative behaviour (oscillation vs. overshoot, settling time, steady-state) should be indistinguishable.
+
+---
+
+##### Known limitations of the PhysX backend
+
+**Single-joint scope only**
+
+The PhysX backend is implemented using a `RigidDynamic` body constrained by a `D6Joint` — not PhysX's dedicated reduced-coordinate articulation solver. This is a deliberate choice given the tool's single-joint scope, but it has consequences worth understanding.
+
+**Why not articulations?**
+
+Tools like Isaac Lab and Isaac Sim model robots as **PhysX articulations** (`PxArticulationReducedCoordinate`). Articulations have two important advantages over the D6-joint approach:
+
+1. **Built-in joint drives with correct units.** The articulation drive `damping` parameter operates in Force mode (N·m·s/rad) by default, directly matching MuJoCo's `joint.damping` with no scaling required.
+2. **Reduced-coordinate solver.** For multi-body chains (robot arms, legged robots), the reduced-coordinate formulation avoids constraint drift that accumulates with sequential D6 joints.
+
+pyphysx 0.2.5 — the Python binding used here — does not expose the articulation API at all. The complete set of available classes (`RigidDynamic`, `RigidStatic`, `D6Joint`, `Scene`, `Material`, `Shape`) contains no articulation or articulation-joint type. Switching would require writing new C++ pybind11 bindings against the arm64-patched PhysX source, which is a significant undertaking for a tool that targets single-joint diagnostics.
+
+For the single revolute joint case the D6 approach is numerically equivalent: there is no constraint chain to drift, and the analytical injection of gravity and damping (described above) produces the same equations of motion as a properly configured articulation drive.
+
+**The broader sim-to-sim damping problem**
+
+The damping unit mismatch we found in pyphysx is a specific instance of a wider issue that has caused real problems in robotics research. Three conventions coexist across the major simulators:
+
+| Simulator / API | Damping parameter meaning | Units | Effective torque |
+|---|---|---|---|
+| MuJoCo `joint.damping` | Viscous torque coefficient | N·m·s/rad | `−b · dq` |
+| Isaac Lab `ImplicitActuator` (Force mode, default) | Same as MuJoCo | N·m·s/rad | `−b · dq` |
+| Isaac Gym (deprecated, Acceleration mode default) | Inertia-normalised gain | 1/s | `−(d · I) · dq` |
+| pyphysx `RigidDynamic.set_angular_damping(d)` | Inverse time constant | 1/s | `−(d · I) · dq` |
+
+Isaac Gym used PhysX articulation drives in **Acceleration mode** (`isAcceleration=True`) by default, where the engine internally multiplies the gain by the link's inertia. Isaac Lab switched this to **Force mode** (`isAcceleration=False`), making its `damping` directly comparable to MuJoCo. This breaking change is documented in Isaac Lab's migration guide, but the inertia-scaling factor is rarely explained explicitly, and RL policies ported from Isaac Gym environments to Isaac Lab (or MuJoCo) produced incorrect dynamics unless the damping was rescaled by `I`.
+
+pyphysx's body-level `set_angular_damping` is a third, separate API — not the articulation drive at all — and happens to share the same `1/s` unit problem as Isaac Gym's acceleration mode, even though the underlying mechanism differs.
+
+Our fix (setting `angular_damping=0` and injecting `−b·dq` analytically) sidesteps all three conventions and ensures ActDiag's PhysX backend always uses the same physical definition as MuJoCo regardless of which pyphysx version or PhysX drive mode would be in play.
+
+**When to consider a different approach**
+
+If ActDiag is extended to multi-joint systems (robot arm, leg, full kinematic chain), the D6-joint approach should be replaced. At that point, the right path is to use Isaac Lab's `omni.isaac.core` articulation API directly, which exposes reduced-coordinate articulations with Force-mode drives, proper contact handling, and GPU-parallel simulation — rather than extending the pyphysx binding further.
+
+---
+
+#### Physics backend: `openmodelica`
+
+See the **[🏭 OpenModelica Backend — FMI / FMU](#-openmodelica-backend--fmi--fmu)** section for the full explanation: what FMI/FMU is, how the Modelica model is generated and cached, integrator comparison, usage, installation, and limitations.
+
+```yaml
+simulation:
+  backend: openmodelica
+```
+
+---
 
 ### Search (`search.yaml`)
 Defines the range for parameters you want to optimize with `fit`.
@@ -265,6 +351,155 @@ Notes:
 
 ---
 
+## 🏭 OpenModelica Backend — FMI / FMU
+
+ActDiag supports a third physics backend driven by the open **FMI 2.0 Co-Simulation** standard (Functional Mock-up Interface). You do not need MATLAB, Simulink, or any commercial license — only the free [OpenModelica](https://openmodelica.org/) compiler (`omc`) and two pip packages.
+
+### What is FMI / FMU?
+
+**FMI (Functional Mock-up Interface)** is an open IEC standard for exchanging simulation models between tools. A **Functional Mock-up Unit (FMU)** is a portable zip archive containing:
+
+- `modelDescription.xml` — variable declarations (inputs, outputs, parameters, states)
+- `binaries/<platform>/` — a compiled shared library implementing the model
+- `sources/` — optional C source code for cross-compilation
+
+The **Co-Simulation** variant (used here) lets the FMU advance its own internal states by one communication step (`doStep`). The Python master — ActDiag — just sets inputs (`tau_cmd`) before each step and reads outputs (`q`, `dq`) after. No knowledge of the FMU's internal solver is needed.
+
+Other tools that can export Co-Simulation FMUs include Dymola, Modelon Impact, Ansys Twin Builder, and Simulink (via the FMU exporter). An FMU compiled by any of these tools can — in principle — be dropped into ActDiag's cache directory and used without any code changes.
+
+### How ActDiag uses it
+
+```
+scene.yaml physics params
+    │
+    ▼
+_modelica_source()           ← generates a .mo file at runtime
+    │
+    ▼  (first run only, requires omc on PATH)
+omc buildModelFMU()          ← compiles to a Co-Simulation FMU
+    │
+    ▼
+~/.actdiag/fmu_cache/<hash>/ ← cached; subsequent runs skip compilation
+    │
+    ▼
+fmpy FMU2Slave               ← drives the FMU step-by-step
+    setReal([tau_cmd], [τ])
+    doStep(t, dt)
+    getReal([q]), getReal([dq])
+```
+
+The cache key is the SHA-256 of the physics parameters (`inertia`, `damping`, `gravity`, `com_x`, `q0`, `dq0`, …). Identical parameters → same FMU, loaded instantly. Different parameters → one new compilation.
+
+### The generated Modelica model
+
+ActDiag generates this Modelica model at runtime (values filled in from `scene.yaml`):
+
+```modelica
+model ActDiagSingleJoint
+  "Single-revolute-joint ODE (ActDiag auto-generated). I*ddq = tau_cmd - b*dq + m*g*com_x*cos(q)."
+  output Real q(start = 0.0, fixed = true)
+    "Joint angle (rad)";
+  output Real dq(start = 0.0, fixed = true)
+    "Joint angular velocity (rad/s)";
+  input Real tau_cmd(start = 0.0)
+    "Applied torque (N.m)";
+equation
+  der(q) = dq;
+  0.05 * der(dq) = tau_cmd - 0.1 * dq + 1.0 * 9.81 * 0.1414 * cos(q);
+end ActDiagSingleJoint;
+```
+
+The equation of motion is **identical** to the MuJoCo and PhysX backends:
+
+```
+I · q̈  =  τ_cmd  −  b · q̇  +  m · g · com_x · cos(q)
+```
+
+The `com_x` offset is derived from `inertia` using the same formula used in `scene.py`:
+
+```
+com_x = min(0.15, max(0.03, sqrt(inertia × 0.4 / mass)))
+```
+
+### Integrator comparison
+
+| Backend | Integrator | Order | Notes |
+|---|---|---|---|
+| `mujoco` | RK4 | 4th | Fixed step, symplectic-like energy behaviour |
+| `physx` | Semi-implicit Euler | 1st | Slightly dissipative; analytical damping+gravity injected |
+| `openmodelica` | DASSL | variable | Implicit multi-step; adaptive internal step; most accurate |
+
+The OpenModelica FMU uses DASSL by default. With `dt = 0.002 s` you will get very close agreement with MuJoCo — any residual difference is numerical (integrator order), not a difference in the physics model.
+
+### Usage
+
+Enable in `scenario.yaml`:
+
+```yaml
+simulation:
+  duration: 2.5
+  dt: 0.002
+  backend: openmodelica   # ← only this line changes vs mujoco
+```
+
+Or override from the command line without editing any file:
+
+```bash
+actdiag run --system examples/system_pd.yaml \
+            --scenario examples/scenario_step.yaml \
+            -- simulation.backend openmodelica
+```
+
+**First run** (cache miss): compiles the Modelica model via `omc` — takes 10–30 s.  
+**Subsequent runs** (cache hit): loads the precompiled FMU via `fmpy` — starts in < 1 s.
+
+### Installation
+
+```bash
+# 1. Install OpenModelica (provides the omc compiler)
+#    macOS:
+brew install --cask openmodelica
+#    Linux: https://openmodelica.org/download/download-linux/
+
+# Verify omc is on PATH and is arm64 (Apple Silicon):
+which omc && file $(which omc)
+
+# 2. Install the Python packages
+pip install fmpy OMPython
+
+# 3. (Optional) install as an ActDiag extra
+pip install "actdiag[openmodelica]"
+```
+
+### Limitations
+
+| Limitation | Detail |
+|---|---|
+| `omc` required on first run | Only needed to compile the FMU. Cached FMUs run with `fmpy` alone — no OpenModelica needed. |
+| arm64 / Apple Silicon | OpenModelica must be a native arm64 or universal-binary build. An x86_64 FMU `.dylib` cannot be loaded by a native arm64 Python process. Verify: `file $(which omc)`. If x86_64-only, compile on an x86_64 machine and copy `~/.actdiag/fmu_cache/` to the arm64 host. |
+| FMI 2.0 Co-Simulation | The master cannot control internal solver sub-steps. `dt` is the coarsest integration granularity. |
+| Single-joint only | Like all ActDiag backends, this models a single revolute joint. FMI itself is not the limiting factor — the constraint is ActDiag's current single-joint scope. |
+
+---
+
+## 🧪 Tests
+
+```bash
+# Install pytest (one-time)
+pip install pytest
+
+# Run the full suite (184 tests, ~1 s)
+python -m pytest
+
+# With coverage
+pip install pytest-cov
+python -m pytest --cov=actdiag --cov-report=term-missing
+```
+
+The suite covers config parsing and validation, signal generation, actuator and controller logic, MuJoCo scene construction, MuJoCo backend physics (energy conservation, damping, gravity), OpenModelica backend error handling, and sweep metric computation. No external services or optional backends are required — OpenModelica and PhysX tests run in environments without those engines installed and exercise only the error-handling paths.
+
+---
+
 ## ⚙️ Requirements
 - Python 3.10+
 - MuJoCo, NumPy, Pandas, Matplotlib, Pydantic, PyYAML, Rich
@@ -335,6 +570,23 @@ pip install numpy-quaternion
 python -c "from pyphysx._pyphysx import Scene, RigidDynamic; s = Scene(); print('pyphysx ok')"
 ```
 
+### Optional: OpenModelica backend (FMI Co-Simulation)
+
+See the **[🏭 OpenModelica Backend — FMI / FMU](#-openmodelica-backend--fmi--fmu)** section above for full details. Quick install:
+
+```bash
+brew install --cask openmodelica   # macOS; for Linux: openmodelica.org/download
+pip install fmpy OMPython
+# or: pip install "actdiag[openmodelica]"
+```
+
+Verify:
+
+```bash
+which omc && file $(which omc)   # confirm omc is on PATH and is arm64/universal
+python -c "import fmpy; from OMPython import OMCSessionZMQ; print('OK')"
+```
+
 # ActDiag Roadmap
 
 ---
@@ -349,7 +601,7 @@ The development focuses on adding complexity only when it improves interpretabil
 ### v0.x — Current (Foundation)
 
 - Single-joint simulation with MuJoCo
-- Pluggable physics backends: `mujoco` (default) and `physx` (NVIDIA PhysX 4 via pyphysx)
+- Pluggable physics backends: `mujoco` (default), `physx` (NVIDIA PhysX 4 via pyphysx), and `openmodelica` (FMI 2.0 Co-Simulation via OpenModelica / fmpy)
 - Actuator models:
   - `ideal_torque` / `limited_torque` (alias)
   - `dynamic_torque`
@@ -431,11 +683,8 @@ Goal:
 
 ## 🧠 Design Philosophy
 
-- Start simple, add complexity only when necessary
-- Prefer interpretable parameters over physically complete models
-- Focus on:
-  - reproducibility
-  - diagnosability
-  - fitting robustness
-
-If a simpler model can explain the behavior, prefer it over a more complex one.
+- **Start simple, add complexity only when necessary.** One joint, one scenario, one run. Scale up only when the simpler model fails to explain the data.
+- **Prefer interpretable parameters over physically complete models.** Every parameter in the config maps to something you can measure or tune, not a numerical coefficient in a solver.
+- **Pluggable backends, identical physics.** All three backends (MuJoCo, PhysX, OpenModelica) implement the same equation of motion. Differences you observe between backends are real — integrator order, constraint drift, damping convention — not artifacts of different model definitions. The backend layer exists to expose and quantify those differences, not to hide them.
+- **Sim-to-sim before sim-to-real.** If two simulators disagree on your actuator's step response, the discrepancy will show up as a policy transfer gap or an unexplained fitting residual. ActDiag makes those disagreements visible before they cost you hardware experiments.
+- **Focus on reproducibility, diagnosability, and fitting robustness.** Every run writes a full config snapshot, so results are always reproducible. Every metric is traceable back to a time series.

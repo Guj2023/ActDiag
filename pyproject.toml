@@ -20,8 +20,19 @@ dependencies = [
   "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+physx = ["pyphysx"]
+openmodelica = ["fmpy>=0.3", "OMPython>=3.5"]
+
 [project.scripts]
 actdiag = "actdiag.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["actdiag*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # OMPython imports pyparsing with a deprecated API; not our code — suppress
+    "ignore::pyparsing.warnings.PyparsingDeprecationWarning",
+]
